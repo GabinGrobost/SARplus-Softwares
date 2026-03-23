@@ -70,8 +70,8 @@ C'est tout. Aucune installation requise.
 
 Pour une utilisation sans internet (terrain, exercice isolé) :
 
-1. Préparer un cache de tuiles OSM localement
-2. Lancer `tile_server.bat` (Windows) — démarre un serveur Python sur `localhost:8080`
+1. Télécharger les tuiles OSM localement, avec Mobile Atlas Créator par exemple
+2. Lancer `serveur_tuiles.bat` (à placer à la racine du dossier des tuiles) — démarre un serveur Python sur `localhost:8080`
 3. Dans CartoFLU, sélectionner le fond de carte **"📴 Local (hors ligne)"**
 
 ### Fichier callsign_list.txt
@@ -95,8 +95,7 @@ Un exemple de fichier est fourni dans le dépôt (`callsign_list.example.txt`).
 CartoFLU/
 ├── CartoFLU.html              # Application principale (fichier unique)
 ├── callsign_list-example.txt  # Exemple de liste d'indicatifs
-├── tile_server.py             # Serveur de tuiles hors-ligne
-├── tile_server.bat            # Lanceur Windows pour le serveur
+├── serveur_tuiles.bat            # Serveur de tuiles hors-ligne
 └── README.md
 ```
 
