@@ -146,6 +146,12 @@
     transform: translateY(1px);
   }
 
+  .uncertainty-sector {
+    fill: url(#uncertaintyHatchPattern) !important;
+    fill-opacity: 1 !important;
+    stroke: none !important;
+  }
+
   .header-sep { flex: 1; }
 
   /* ROLL CALL */
@@ -1780,7 +1786,13 @@
         <span>Axe de relèvement</span>
       </div>
       <div class="legend-item">
-        <div class="legend-line" style="background:rgba(0,212,255,0.25);height:8px;border-radius:2px"></div>
+        <div class="legend-line" style="height:12px;border-radius:2px;
+          background: repeating-linear-gradient(
+            45deg,
+            rgba(255,45,85,0.75) 0px, rgba(255,45,85,0.75) 4px,
+            rgba(255,45,85,0.1) 4px, rgba(255,45,85,0.1) 10px
+          );
+          border:1px solid rgba(255,45,85,0.9);"></div>
         <span>Secteur incertitude</span>
       </div>
       <div class="legend-item">
@@ -1828,11 +1840,51 @@ const map = L.map('map', {
   zoom: 6,
   zoomControl: false
 });
+L.svg().addTo(map);
 
 // Force Leaflet to recalculate dimensions once layout is stable
 setTimeout(() => map.invalidateSize(), 100);
 setTimeout(() => map.invalidateSize(), 500);
 window.addEventListener('resize', () => map.invalidateSize());
+
+function ensureUncertaintyPattern() {
+  const svg = map.getPanes()?.overlayPane?.querySelector('svg');
+  if (!svg) return;
+
+  let defs = svg.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    svg.prepend(defs);
+  }
+
+  if (defs.querySelector('#uncertaintyHatchPattern')) return;
+
+  const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+  pattern.setAttribute('id', 'uncertaintyHatchPattern');
+  pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+  pattern.setAttribute('width', '12');
+  pattern.setAttribute('height', '12');
+  pattern.setAttribute('patternTransform', 'rotate(45)');
+
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('width', '12');
+  bg.setAttribute('height', '12');
+  bg.setAttribute('fill', 'rgba(255,45,85,0.10)');
+  pattern.appendChild(bg);
+
+  const stripe = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  stripe.setAttribute('x1', '0');
+  stripe.setAttribute('y1', '0');
+  stripe.setAttribute('x2', '0');
+  stripe.setAttribute('y2', '12');
+  stripe.setAttribute('stroke', '#ff2d55');
+  stripe.setAttribute('stroke-width', '4');
+  stripe.setAttribute('opacity', '0.85');
+  pattern.appendChild(stripe);
+
+  defs.appendChild(pattern);
+}
+ensureUncertaintyPattern();
 
 const BASEMAPS = {
   osm: {
@@ -2074,7 +2126,10 @@ function toggleIntersectionVisibility() {
   }
   if (intersectionMarker) {
     if (intersectionHidden) intersectionMarker.remove();
-    else intersectionMarker.addTo(map);
+    else {
+      intersectionMarker.addTo(map);
+      intersectionMarker.bringToFront();
+    }
   }
 }
 let pickMode = false;
@@ -3768,6 +3823,7 @@ function drawBearing(item) {
 
   // Uncertainty sector
   if (uncertainty > 0) {
+    ensureUncertaintyPattern();
     const sectors = [];
     const steps = 24;
     const b1 = bearing - uncertainty;
@@ -3779,9 +3835,10 @@ function drawBearing(item) {
     }
     sectors.push([lat, lon]);
     L.polygon(sectors, {
-      color: color,
-      fillColor: color,
-      fillOpacity: 0.12,
+      color: '#ff2d55',
+      className: 'uncertainty-sector',
+      fillColor: '#ff2d55',
+      fillOpacity: 0.01,
       weight: 0,
       interactive: false
     }).addTo(group);
@@ -4028,11 +4085,14 @@ function computeIntersection(silent = false) {
     weight: 2,
     opacity: 0.95,
     fillColor: '#ff2d55',
-    fillOpacity: 0.18
+    fillOpacity: 0.45
   }).bindPopup(popupHtml);
 
   updateIntersectionMarkerZoomScale();
-  if (!intersectionHidden) intersectionMarker.addTo(map);
+  if (!intersectionHidden) {
+    intersectionMarker.addTo(map);
+    intersectionMarker.bringToFront();
+  }
 
   const el = document.getElementById('intersectionResult');
   el.style.display = 'block';
