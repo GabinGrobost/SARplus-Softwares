@@ -4807,18 +4807,10 @@ let autoIntersectionRefreshTimer = null;
 function scheduleAutoIntersectionRefresh() {
   clearTimeout(autoIntersectionRefreshTimer);
 
-  // Recalcul immédiat pour que la zone de recherche se mette à jour sans délai
-  refreshIntersection(true);
-
-  // Recalcul différé de sécurité après le rendu DOM / Leaflet
+  // Recalcul différé unique pour éviter les effacements visuels pendant les mises à jour successives.
   autoIntersectionRefreshTimer = setTimeout(() => {
     refreshIntersection(true);
-  }, 80);
-
-  // Recalcul supplémentaire au frame suivant pour les cas de rendu différé
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(() => refreshIntersection(true));
-  }
+  }, 120);
 }
 
 function refreshIntersection(auto = true) {
@@ -4894,8 +4886,10 @@ function computeIntersection(silent = false) {
   let activeLines = [...lines];
   let solution = solveWeightedLeastSquares(activeLines);
   if (!solution) {
-    clearIntersectionDisplay();
-    if (!silent) notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    if (!silent) {
+      clearIntersectionDisplay();
+      notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    }
     return;
   }
 
@@ -4922,8 +4916,10 @@ function computeIntersection(silent = false) {
   }
 
   if (!solution || !usedStable) {
-    clearIntersectionDisplay();
-    if (!silent) notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    if (!silent) {
+      clearIntersectionDisplay();
+      notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    }
     return;
   }
 
@@ -4994,6 +4990,15 @@ function computeIntersection(silent = false) {
     `;
 
   intersectionState = { intLat, intLon, rms, uncertaintyRadiusM, keptBearings: activeLines.length, totalBearings: visible.length };
+
+  // Une nouvelle solution valide doit toujours réafficher la zone.
+  intersectionHidden = false;
+  const eyeBtn = document.getElementById('intersectionEyeBtn');
+  if (eyeBtn) {
+    const eyeOpen = `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`;
+    eyeBtn.innerHTML = eyeOpen;
+    eyeBtn.classList.remove('hidden');
+  }
 
   ensureFoxSearchPattern();
   intersectionMarker = L.circle([intLat, intLon], {
