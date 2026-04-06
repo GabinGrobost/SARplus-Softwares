@@ -155,9 +155,11 @@
   .fox-search-zone {
     fill: url(#foxSearchHatchPattern) !important;
     fill-opacity: 1 !important;
-    stroke: #ff6b7d !important;
+    stroke: #ff7a8a !important;
     stroke-width: 2px !important;
-    stroke-dasharray: 8 7 !important;
+    stroke-dasharray: 8 6 !important;
+    stroke-linecap: round !important;
+    opacity: 1 !important;
   }
 
   .header-sep { flex: 1; }
@@ -1920,11 +1922,6 @@
         <div style="margin-top:6px;font-family:'Share Tech Mono',monospace;font-size:10px;opacity:0.75;letter-spacing:1px;">Calcul automatique immédiat à chaque ajout, modification, masquage ou suppression de relevé</div>
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-secondary" style="flex:1" onclick="centerIntersection()">🎯 Centrer la carte</button>
-          <button class="btn btn-eye" id="intersectionEyeBtn" title="Masquer/afficher l'intersection"
-            onclick="toggleIntersectionVisibility()"
-            style="display:inline-flex;align-items:center;justify-content:center;padding:0 10px;">
-            <svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-          </button>
         </div>
       </div>
 
@@ -2305,29 +2302,46 @@ function ensureFoxSearchPattern() {
   const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
   pattern.setAttribute('id', 'foxSearchHatchPattern');
   pattern.setAttribute('patternUnits', 'userSpaceOnUse');
-  pattern.setAttribute('width', '10');
-  pattern.setAttribute('height', '10');
+  pattern.setAttribute('width', '12');
+  pattern.setAttribute('height', '12');
   pattern.setAttribute('patternTransform', 'rotate(45)');
 
   const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  bg.setAttribute('width', '10');
-  bg.setAttribute('height', '10');
-  bg.setAttribute('fill', 'rgba(255,107,125,0.10)');
+  bg.setAttribute('width', '12');
+  bg.setAttribute('height', '12');
+  bg.setAttribute('fill', 'rgba(255,122,138,0.14)');
   pattern.appendChild(bg);
 
   const stripe = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   stripe.setAttribute('x1', '0');
   stripe.setAttribute('y1', '0');
   stripe.setAttribute('x2', '0');
-  stripe.setAttribute('y2', '10');
-  stripe.setAttribute('stroke', '#ff6b7d');
-  stripe.setAttribute('stroke-width', '3');
-  stripe.setAttribute('opacity', '0.75');
+  stripe.setAttribute('y2', '12');
+  stripe.setAttribute('stroke', '#ff7a8a');
+  stripe.setAttribute('stroke-width', '2.2');
+  stripe.setAttribute('opacity', '0.9');
   pattern.appendChild(stripe);
 
   defs.appendChild(pattern);
 }
 ensureFoxSearchPattern();
+
+
+function applyFoxSearchZoneStyle(layer) {
+  if (!layer?.getElement) return;
+  ensureFoxSearchPattern();
+  const path = layer.getElement();
+  if (!path) return;
+
+  path.classList.add('fox-search-zone');
+  path.setAttribute('fill', 'url(#foxSearchHatchPattern)');
+  path.setAttribute('fill-opacity', '1');
+  path.setAttribute('stroke', '#ff7a8a');
+  path.setAttribute('stroke-width', '2');
+  path.setAttribute('stroke-dasharray', '8 6');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('opacity', '1');
+}
 
 const BASEMAPS = {
   osm: {
@@ -2550,30 +2564,11 @@ function updateAllLabelPos() {
 }
 
 let intersectionMarker = null;
-let intersectionHidden = false;  // visible par défaut si calculé
 let intersectionState = null;
 
 function updateIntersectionMarkerZoomScale() {
   // Conservé pour compatibilité: la zone d'intersection est désormais en mètres
   // (L.circle), donc son comportement visuel est automatiquement cohérent au zoom.
-}
-
-function toggleIntersectionVisibility() {
-  intersectionHidden = !intersectionHidden;
-  const btn = document.getElementById('intersectionEyeBtn');
-  const eyeOpen = `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`;
-  const eyeClosed = `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L15 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 3.2C7 3.07 7.5 3 8 3c3 0 5.5 2.5 6.5 4-.35.6-.8 1.2-1.35 1.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><path d="M3.3 5.1C2.45 6 1.7 7.1 1.5 7c1 1.5 3.5 4 6.5 4 1.1 0 2.1-.3 3-.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><circle cx="8" cy="7" r="1.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="2 2"/></svg>`;
-  if (btn) {
-    btn.innerHTML = intersectionHidden ? eyeClosed : eyeOpen;
-    btn.classList.toggle('hidden', intersectionHidden);
-  }
-  if (intersectionMarker) {
-    if (intersectionHidden) intersectionMarker.remove();
-    else {
-      intersectionMarker.addTo(map);
-      intersectionMarker.bringToFront();
-    }
-  }
 }
 let pickMode = false;
 let previewLayer = null;   // prévisualisation azimut en temps réel
@@ -4787,18 +4782,10 @@ let autoIntersectionRefreshTimer = null;
 function scheduleAutoIntersectionRefresh() {
   clearTimeout(autoIntersectionRefreshTimer);
 
-  // Recalcul immédiat pour que la zone de recherche se mette à jour sans délai
-  refreshIntersection(true);
-
-  // Recalcul différé de sécurité après le rendu DOM / Leaflet
+  // Recalcul différé unique pour éviter les effacements visuels pendant les mises à jour successives.
   autoIntersectionRefreshTimer = setTimeout(() => {
     refreshIntersection(true);
-  }, 80);
-
-  // Recalcul supplémentaire au frame suivant pour les cas de rendu différé
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(() => refreshIntersection(true));
-  }
+  }, 120);
 }
 
 function refreshIntersection(auto = true) {
@@ -4874,8 +4861,10 @@ function computeIntersection(silent = false) {
   let activeLines = [...lines];
   let solution = solveWeightedLeastSquares(activeLines);
   if (!solution) {
-    clearIntersectionDisplay();
-    if (!silent) notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    if (!silent) {
+      clearIntersectionDisplay();
+      notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    }
     return;
   }
 
@@ -4902,8 +4891,10 @@ function computeIntersection(silent = false) {
   }
 
   if (!solution || !usedStable) {
-    clearIntersectionDisplay();
-    if (!silent) notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    if (!silent) {
+      clearIntersectionDisplay();
+      notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    }
     return;
   }
 
@@ -4978,20 +4969,21 @@ function computeIntersection(silent = false) {
   ensureFoxSearchPattern();
   intersectionMarker = L.circle([intLat, intLon], {
     radius: uncertaintyRadiusM,
-    color: '#ff6b7d',
+    color: '#ff7a8a',
     weight: 2,
-    opacity: 0.95,
-    dashArray: '8,7',
+    opacity: 1,
+    dashArray: '8,6',
     className: 'fox-search-zone',
-    fillColor: '#ff6b7d',
-    fillOpacity: 0.12
+    fillColor: '#ff7a8a',
+    fillOpacity: 0.18
   }).bindPopup(popupHtml);
 
+  intersectionMarker.on('add', () => applyFoxSearchZoneStyle(intersectionMarker));
+
   updateIntersectionMarkerZoomScale();
-  if (!intersectionHidden) {
-    intersectionMarker.addTo(map);
-    intersectionMarker.bringToFront();
-  }
+  intersectionMarker.addTo(map);
+  applyFoxSearchZoneStyle(intersectionMarker);
+  intersectionMarker.bringToFront();
 
   Object.values(layers).forEach(layer => layer?.remove && layer.remove());
   Object.keys(layers).forEach(id => delete layers[id]);
