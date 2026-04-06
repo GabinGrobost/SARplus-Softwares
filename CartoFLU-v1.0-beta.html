@@ -4966,6 +4966,15 @@ function computeIntersection(silent = false) {
 
   intersectionState = { intLat, intLon, rms, uncertaintyRadiusM, keptBearings: activeLines.length, totalBearings: visible.length };
 
+  // Une nouvelle solution valide doit toujours réafficher la zone.
+  intersectionHidden = false;
+  const eyeBtn = document.getElementById('intersectionEyeBtn');
+  if (eyeBtn) {
+    const eyeOpen = `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`;
+    eyeBtn.innerHTML = eyeOpen;
+    eyeBtn.classList.remove('hidden');
+  }
+
   ensureFoxSearchPattern();
   intersectionMarker = L.circle([intLat, intLon], {
     radius: uncertaintyRadiusM,
