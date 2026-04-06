@@ -2057,10 +2057,69 @@ function updateAllLabelPos() {
 let intersectionMarker = null;
 let intersectionHidden = false;  // visible par défaut si calculé
 let intersectionState = null;
+const INTERSECTION_HATCH_SPACING_PX = 8;
+const INTERSECTION_HATCH_WIDTH_PX = 2;
+
+function buildIntersectionHatchedLayer(intLat, intLon, uncertaintyRadiusM, popupHtml) {
+  const group = L.layerGroup();
+
+  L.circle([intLat, intLon], {
+    radius: uncertaintyRadiusM,
+    color: '#ff2d55',
+    weight: 2,
+    opacity: 0.95,
+    fillOpacity: 0
+  }).addTo(group);
+
+  const centerPx = map.latLngToLayerPoint([intLat, intLon]);
+  const edgePx = map.latLngToLayerPoint(destinationPoint(intLat, intLon, 90, uncertaintyRadiusM / 1000));
+  const radiusPx = Math.max(6, centerPx.distanceTo(edgePx));
+  const halfDiag = Math.sqrt(2) * radiusPx;
+  const stripes = [];
+
+  for (let offset = -halfDiag; offset <= halfDiag; offset += INTERSECTION_HATCH_SPACING_PX) {
+    const segHalf = Math.sqrt(Math.max(0, radiusPx * radiusPx - offset * offset));
+    const p1 = L.point(centerPx.x + offset - segHalf, centerPx.y + offset + segHalf);
+    const p2 = L.point(centerPx.x + offset + segHalf, centerPx.y + offset - segHalf);
+    stripes.push([
+      map.layerPointToLatLng(p1),
+      map.layerPointToLatLng(p2)
+    ]);
+  }
+
+  stripes.forEach(seg => {
+    L.polyline(seg, {
+      color: '#ff2d55',
+      weight: INTERSECTION_HATCH_WIDTH_PX,
+      opacity: 0.6,
+      interactive: false
+    }).addTo(group);
+  });
+
+  group.bindPopup(popupHtml);
+  return group;
+}
 
 function updateIntersectionMarkerZoomScale() {
-  // Conservé pour compatibilité: la zone d'intersection est désormais en mètres
-  // (L.circle), donc son comportement visuel est automatiquement cohérent au zoom.
+  if (!intersectionMarker || !intersectionState) return;
+
+  const popup = intersectionMarker.getPopup();
+  const wasOpen = popup && map.hasLayer(popup);
+  const popupLatLng = wasOpen ? popup.getLatLng() : null;
+
+  intersectionMarker.remove();
+  intersectionMarker = buildIntersectionHatchedLayer(
+    intersectionState.intLat,
+    intersectionState.intLon,
+    intersectionState.uncertaintyRadiusM,
+    intersectionState.popupHtml
+  );
+
+  if (!intersectionHidden) intersectionMarker.addTo(map);
+
+  if (wasOpen && popupLatLng && !intersectionHidden) {
+    intersectionMarker.openPopup(popupLatLng);
+  }
 }
 
 function toggleIntersectionVisibility() {
@@ -3765,6 +3824,7 @@ function drawBearing(item) {
   const { id, lat, lon, bearing, uncertainty, lineLength, callsign, frequency, notes, color } = item;
   const num = getBearingNum(item);
   const group = L.layerGroup();
+  const uncertaintyColor = '#2f6bff';
 
   // Uncertainty sector
   if (uncertainty > 0) {
@@ -3779,10 +3839,11 @@ function drawBearing(item) {
     }
     sectors.push([lat, lon]);
     L.polygon(sectors, {
-      color: color,
-      fillColor: color,
-      fillOpacity: 0.12,
-      weight: 0,
+      color: uncertaintyColor,
+      fillColor: uncertaintyColor,
+      fillOpacity: 0.22,
+      weight: 1,
+      opacity: 0.7,
       interactive: false
     }).addTo(group);
 
@@ -3790,7 +3851,7 @@ function drawBearing(item) {
     [b1, b2].forEach(a => {
       const end = destinationPoint(lat, lon, a, lineLength);
       L.polyline([[lat, lon], end], {
-        color: color, weight: 1, opacity: 0.4,
+        color: uncertaintyColor, weight: 1, opacity: 0.65,
         dashArray: '5,6', interactive: false
       }).addTo(group);
     });
@@ -4020,16 +4081,9 @@ function computeIntersection(silent = false) {
       </div>
     `;
 
-  intersectionState = { intLat, intLon, rms, uncertaintyRadiusM };
+  intersectionState = { intLat, intLon, rms, uncertaintyRadiusM, popupHtml };
 
-  intersectionMarker = L.circle([intLat, intLon], {
-    radius: uncertaintyRadiusM,
-    color: '#ff2d55',
-    weight: 2,
-    opacity: 0.95,
-    fillColor: '#ff2d55',
-    fillOpacity: 0.18
-  }).bindPopup(popupHtml);
+  intersectionMarker = buildIntersectionHatchedLayer(intLat, intLon, uncertaintyRadiusM, popupHtml);
 
   updateIntersectionMarkerZoomScale();
   if (!intersectionHidden) intersectionMarker.addTo(map);
