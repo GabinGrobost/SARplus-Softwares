@@ -301,9 +301,9 @@
     text-transform: uppercase;
   }
   #basemapSelect {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
+    background: #fff;
+    border: 1px solid #ccc;
+    color: #000;
     font-family: 'Share Tech Mono', monospace;
     font-size: 20px;
     letter-spacing: 1px;
@@ -320,6 +320,35 @@
   }
   #basemapSelect:hover { border-color: var(--accent); }
   #basemapSelect option { background: var(--panel); }
+
+  .basemap-select-overlay {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 700;
+    background: rgba(52,52,52,0.92);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    backdrop-filter: blur(4px);
+    box-shadow: none;
+    pointer-events: auto;
+  }
+
+  .basemap-select-overlay .basemap-select-wrap {
+    gap: 8px;
+    font-size: 16px;
+    letter-spacing: 1px;
+  }
+
+  .basemap-select-overlay .basemap-select-wrap label {
+    font-size: 14px;
+  }
+
+  .basemap-select-overlay #basemapSelect {
+    font-size: 16px;
+    padding: 6px 38px 6px 12px;
+    min-width: 200px;
+  }
 
   .status-bar {
     display: flex;
@@ -769,36 +798,61 @@
 
   /* MAP TOOLBAR */
   .map-toolbar {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    z-index: 500;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    max-height: calc(100% - 24px);
-    overflow-y: auto;
-    overflow-x: visible;
-    scrollbar-width: none;
+    gap: 0;
   }
   .map-toolbar::-webkit-scrollbar { display: none; }
 
+  .leaflet-control-zoom .map-toolbar {
+    width: 100%;
+    margin: 0;
+  }
+
   .map-btn {
-    width: 30px; height: 30px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 2.5px;
-    color: var(--text);
+    width: 100%;
+    min-width: 0;
+    height: 26px;
+    padding: 0;
+    background: #fff;
+    border: 0;
+    border-top: 1px solid rgba(0,0,0,0.2);
+    border-radius: 0;
+    color: #000;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
-    transition: all .2s;
+    font-size: 18px;
+    line-height: 1;
+    text-align: center;
+    transition: background .2s, color .2s;
+    box-shadow: none;
+    appearance: none;
+    -webkit-appearance: none;
   }
 
-  .map-btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: var(--glow); }
-  .map-btn.active { background: rgba(0,212,255,0.15); border-color: var(--accent); color: var(--accent); }
+  .map-btn svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+    margin: auto;
+    flex: 0 0 auto;
+    pointer-events: none;
+  }
+
+  #undoBtn svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .map-btn:hover { background: #f4f4f4; color: #000; box-shadow: none; }
+  .map-btn.active { background: #f4f4f4; color: #000; }
+  .map-btn:disabled {
+    color: #999;
+    background: #fff;
+    cursor: not-allowed;
+  }
 
   /* CROSSHAIR CURSOR */
   #map.picking-mode { cursor: crosshair !important; }
@@ -1137,21 +1191,9 @@
 
 <header>
   <button id="sidebarToggleBtn" class="header-menu-btn active" title="Masquer le menu latéral" onclick="toggleSidebar()">☰ MENU</button>
-  <div class="logo">Carto<span>FLU</span></div>
-  <div style="font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:2px;color:var(--accent);white-space:nowrap;"><span style="color:var(--accent2);">F</span>ox <span style="color:var(--accent2);">L</span>ocating <span style="color:var(--accent2);">U</span>tility</div>
-  <div class="basemap-select-wrap">
-    <label for="basemapSelect">🗺 FOND</label>
-    <select id="basemapSelect" onchange="changeBasemap(this.value)">
-      <option value="osm">OSM Standard</option>
-      <option value="osmorg">OSM.org</option>
-      <option value="osmfr">OSM France</option>
-      <option value="topo">OpenTopoMap</option>
-      <option value="satellite">Satellite (Esri)</option>
-
-      <option value="cycle">CyclOSM</option>
-      <option value="local">📴 Local (hors ligne)</option>
-    </select>
-  </div>
+  <div class="logo">SAR<span>+</span></div>
+  <div style="font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:2px;color:var(--accent);white-space:nowrap;"><span style="color:var(--accent2);">S</span>earch <span style="color:var(--accent2);">A</span>nd <span style="color:var(--accent2);">R</span>escue</div>
+  <div class="header-sep"></div>
   <!-- APPEL STATIONS -->
   <div class="rollcall-btn">
     <div id="rollcallToggle" onclick="toggleRollcall()">
@@ -1204,8 +1246,6 @@
       </div>
     </div>
   </div>
-
-  <div class="header-sep"></div>
 </header>
 
 <div class="workspace">
@@ -1609,6 +1649,22 @@
   <div style="flex:1;position:relative;min-height:0;min-width:0;overflow:hidden;">
     <div id="map"></div>
 
+    <div class="basemap-select-overlay">
+      <div class="basemap-select-wrap">
+        <select id="basemapSelect" onchange="changeBasemap(this.value)">
+          <option value="osm">OSM Standard</option>
+          <option value="osmorg">OSM.org</option>
+          <option value="osmfr">OSM France</option>
+          <option value="topo">OpenTopoMap</option>
+          <option value="ignplan">IGN Plan IGN v2</option>
+          <option value="ignortho">IGN Orthophotos</option>
+          <option value="ignscan25">IGN SCAN 25</option>
+          <option value="satellite">Esri World Imagery</option>
+          <option value="local">📴 Local (hors ligne)</option>
+        </select>
+      </div>
+    </div>
+
     <div class="coord-overlay">
       <div class="coord-overlay-head">
         <span class="status-dot"></span>
@@ -1628,9 +1684,25 @@
 </div>
 
     <div class="map-toolbar">
-      <button class="map-btn" title="Annuler la dernière action (Ctrl+Z)" onclick="undo()" id="undoBtn" style="opacity:0.35;cursor:not-allowed" disabled>↩</button>
-      <button class="map-btn" title="Réinitialiser la vue" onclick="resetView()">⊙</button>
-      <button class="map-btn" title="Centrer sur les relevés" onclick="fitBounds()">⊞</button>
+      <button class="map-btn" title="Réinitialiser la vue" onclick="resetView()" aria-label="Réinitialiser la vue">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 3V7M12 17V21M3 12H7M17 12H21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+        </svg>
+      </button>
+      <button class="map-btn" title="Centrer sur les relevés" onclick="fitBounds()" aria-label="Centrer sur les relevés">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M4 9V4H9M15 4H20V9M20 15V20H15M9 20H4V15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M9 9H15V15H9Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button class="map-btn" title="Annuler la dernière action (Ctrl+Z)" onclick="undo()" id="undoBtn" style="opacity:0.35;cursor:not-allowed" disabled aria-label="Annuler la dernière action">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M9 7L4 12L9 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 12H14C17.314 12 20 14.686 20 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
     </div>
 
     <div class="map-legend">
@@ -1712,17 +1784,51 @@ const BASEMAPS = {
     attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>, © <a href="https://opentopomap.org">OpenTopoMap</a>',
     maxZoom: 17
   },
-  satellite: {
-    label: 'Esri Satellite',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: '© Esri, DigitalGlobe, Earthstar Geographics',
+  ignplan: {
+    label: 'IGN Plan IGN v2',
+    type: 'wms',
+    url: 'https://data.geopf.fr/wms-r/wms',
+    options: {
+      layers: 'GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2',
+      format: 'image/png',
+      transparent: false,
+      version: '1.3.0'
+    },
+    attribution: '© IGN - Géoplateforme',
     maxZoom: 19
   },
-  cycle: {
-    label: 'CyclOSM',
-    url: 'https://dev.{s}.tile.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="https://www.cyclosm.org/">CyclOSM</a>',
-    maxZoom: 20
+  ignortho: {
+    label: 'IGN Orthophotos',
+    type: 'wms',
+    url: 'https://data.geopf.fr/wms-r/wms',
+    options: {
+      layers: 'ORTHOIMAGERY.ORTHOPHOTOS',
+      format: 'image/jpeg',
+      transparent: false,
+      version: '1.3.0'
+    },
+    attribution: '© IGN - Géoplateforme',
+    maxZoom: 19
+  },
+  ignscan25: {
+    label: 'IGN SCAN 25',
+    type: 'wms',
+    restricted: true,
+    url: 'https://data.geopf.fr/private/wms-r/',
+    options: {
+      layers: 'GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN25TOUR',
+      format: 'image/png',
+      transparent: false,
+      version: '1.3.0'
+    },
+    attribution: '© IGN - Géoplateforme',
+    maxZoom: 19
+  },
+  satellite: {
+    label: 'Esri World Imagery',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '© Esri, Maxar, Earthstar Geographics',
+    maxZoom: 19
   },
   local: {
     label: '📴 Local (hors ligne)',
@@ -1733,23 +1839,97 @@ const BASEMAPS = {
   }
 };
 
-let currentTileLayer = L.tileLayer(BASEMAPS.osm.url, {
-  attribution: BASEMAPS.osm.attribution,
-  maxZoom: BASEMAPS.osm.maxZoom
-}).addTo(map);
+const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
+let currentBasemapKey = 'osm';
 
-function changeBasemap(key) {
+function promptIgnScan25ApiKey(force = false) {
+  const existing = (localStorage.getItem(IGN_SCAN25_APIKEY_STORAGE) || '').trim();
+  if (existing && !force) return existing;
+
+  const entered = window.prompt(
+    "IGN SCAN 25 nécessite une clé HASH cartes.gouv.fr.\nCollez votre clé pour activer ce fond :",
+    existing
+  );
+
+  if (entered === null) return null;
+
+  const clean = entered.trim();
+  if (!clean) {
+    localStorage.removeItem(IGN_SCAN25_APIKEY_STORAGE);
+    notify('⚠ IGN SCAN 25 nécessite une clé HASH cartes.gouv.fr', true);
+    return null;
+  }
+
+  localStorage.setItem(IGN_SCAN25_APIKEY_STORAGE, clean);
+  return clean;
+}
+
+function resolveBasemap(key, opts = {}) {
   const bm = BASEMAPS[key] || BASEMAPS.osm;
-  if (currentTileLayer) map.removeLayer(currentTileLayer);
-  currentTileLayer = L.tileLayer(bm.url, {
+
+  if (key === 'ignscan25') {
+    const apiKey = promptIgnScan25ApiKey(!!opts.forcePrompt);
+    if (!apiKey) return null;
+    return {
+      ...bm,
+      url: `${bm.url}?apikey=${encodeURIComponent(apiKey)}`
+    };
+  }
+
+  return bm;
+}
+
+function createBasemapLayer(bm, key = '') {
+  const commonOptions = {
     attribution: bm.attribution,
     minZoom: bm.minZoom || 1,
     maxZoom: bm.maxZoom || 19
-  }).addTo(map);
-  currentTileLayer.bringToBack();
+  };
+
+  let layer;
+  if (bm.type === 'wms') {
+    layer = L.tileLayer.wms(bm.url, {
+      ...commonOptions,
+      ...(bm.options || {})
+    });
+  } else {
+    layer = L.tileLayer(bm.url, commonOptions);
+  }
+
+  if (key === 'ignscan25') {
+    layer.once('tileerror', () => {
+      localStorage.removeItem(IGN_SCAN25_APIKEY_STORAGE);
+      notify('⚠ IGN SCAN 25 : accès refusé ou clé HASH invalide', true);
+    });
+  }
+
+  return layer;
 }
 
-L.control.zoom({ position: 'topleft' }).addTo(map);
+let currentTileLayer = createBasemapLayer(resolveBasemap('osm') || BASEMAPS.osm, 'osm').addTo(map);
+
+function changeBasemap(key) {
+  const resolved = resolveBasemap(key);
+  if (!resolved) {
+    document.getElementById('basemapSelect').value = currentBasemapKey;
+    return;
+  }
+
+  if (currentTileLayer) map.removeLayer(currentTileLayer);
+  currentTileLayer = createBasemapLayer(resolved, key).addTo(map);
+  currentBasemapKey = key in BASEMAPS ? key : 'osm';
+  if (currentTileLayer.bringToBack) currentTileLayer.bringToBack();
+}
+
+const zoomControl = L.control.zoom({ position: 'topleft' }).addTo(map);
+
+const mapToolbar = document.querySelector('.map-toolbar');
+const zoomContainer = zoomControl.getContainer();
+if (mapToolbar && zoomContainer) {
+  zoomContainer.appendChild(mapToolbar);
+  L.DomEvent.disableClickPropagation(mapToolbar);
+  L.DomEvent.disableScrollPropagation(mapToolbar);
+}
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let bearings = [];
@@ -1801,6 +1981,46 @@ function updateAllLabelPos() {
 
 let intersectionMarker = null;
 let intersectionHidden = true;  // masqué par défaut
+let intersectionState = null;
+
+function buildIntersectionIcon(circleR) {
+  const sz = circleR * 2 + 10;
+  const cx = sz / 2, cy = sz / 2;
+  const uid = `int_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const svgHatch = `
+    <svg width="${sz}" height="${sz}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="${uid}_hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="8" stroke="#ff2d55" stroke-width="1.5" stroke-opacity="0.55"/>
+        </pattern>
+        <clipPath id="${uid}_clip">
+          <circle cx="${cx}" cy="${cy}" r="${circleR}"/>
+        </clipPath>
+      </defs>
+      <circle cx="${cx}" cy="${cy}" r="${circleR}" fill="url(#${uid}_hatch)" clip-path="url(#${uid}_clip)" />
+      <circle cx="${cx}" cy="${cy}" r="${circleR}" fill="none" stroke="#ff2d55" stroke-width="2" stroke-dasharray="6,3"/>
+      <line x1="${cx-10}" y1="${cy}" x2="${cx+10}" y2="${cy}" stroke="#ff2d55" stroke-width="2"/>
+      <line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="#ff2d55" stroke-width="2"/>
+      <circle cx="${cx}" cy="${cy}" r="4" fill="#ff2d55" stroke="#0a0e14" stroke-width="1.5"/>
+    </svg>`;
+
+  return L.divIcon({
+    html: svgHatch,
+    iconSize: [sz, sz],
+    iconAnchor: [cx, cy],
+    className: ''
+  });
+}
+
+function updateIntersectionMarkerZoomScale() {
+  if (!intersectionMarker || !intersectionState) return;
+
+  const scale = map.getZoomScale(map.getZoom(), intersectionState.baseZoom);
+  const circleR = Math.max(12, Math.round(intersectionState.baseCircleR * scale));
+  intersectionMarker.setIcon(buildIntersectionIcon(circleR));
+  intersectionMarker.setLatLng([intersectionState.intLat, intersectionState.intLon]);
+}
 
 function toggleIntersectionVisibility() {
   intersectionHidden = !intersectionHidden;
@@ -1857,6 +2077,7 @@ function undo() {
   // Effacer tous les layers actuels
   bearings.forEach(b => { if (layers[b.id]) { layers[b.id].remove(); delete layers[b.id]; } });
   if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
+  intersectionState = null;
   document.getElementById('intersectionResult').style.display = 'none';
   // Stopper le clignotement d'édition si actif
   stopEditingBlink();
@@ -2065,6 +2286,7 @@ function togglePickMode() {
 }
 
 map.on('zoomend moveend', updateAllLabelPos);
+map.on('zoomend', updateIntersectionMarkerZoomScale);
 map.on('click', e => {
   if (!pickMode) return;
   const { lat, lng } = e.latlng;
@@ -3537,46 +3759,31 @@ function computeIntersection() {
   // Draw intersection
   if (intersectionMarker) intersectionMarker.remove();
 
-  // Rayon du cercle hachuré : basé sur le RMS (min 30px, max 90px)
-  const circleR = Math.min(90, Math.max(30, Math.round(rms * 10)));
-  const sz = circleR * 2 + 10;
-  const cx = sz / 2, cy = sz / 2;
-
-  // SVG avec hachures diagonales vertes et croix centrale
-  const svgHatch = `
-    <svg width="${sz}" height="${sz}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="8" stroke="#ff2d55" stroke-width="1.5" stroke-opacity="0.55"/>
-        </pattern>
-        <clipPath id="clip">
-          <circle cx="${cx}" cy="${cy}" r="${circleR}"/>
-        </clipPath>
-      </defs>
-      <!-- Zone hachurée -->
-      <circle cx="${cx}" cy="${cy}" r="${circleR}" fill="url(#hatch)" clip-path="url(#clip)" />
-      <!-- Contour du cercle -->
-      <circle cx="${cx}" cy="${cy}" r="${circleR}" fill="none" stroke="#ff2d55" stroke-width="2" stroke-dasharray="6,3"/>
-      <!-- Croix centrale -->
-      <line x1="${cx-10}" y1="${cy}" x2="${cx+10}" y2="${cy}" stroke="#ff2d55" stroke-width="2"/>
-      <line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="#ff2d55" stroke-width="2"/>
-      <!-- Point central -->
-      <circle cx="${cx}" cy="${cy}" r="4" fill="#ff2d55" stroke="#0a0e14" stroke-width="1.5"/>
-    </svg>`;
-
-  const icon = L.divIcon({
-    html: svgHatch,
-    iconSize: [sz, sz], iconAnchor: [cx, cy], className: ''
-  });
-  intersectionMarker = L.marker([intLat, intLon], { icon })
-    .bindPopup(`
+  // Rayon de base du cercle hachuré : basé sur le RMS (min 30px, max 90px)
+  // puis rescalé à chaque zoom pour suivre l'échelle de la carte.
+  const baseCircleR = Math.min(90, Math.max(30, Math.round(rms * 10)));
+  const popupHtml = `
       <div class="popup-title" style="color:#ff2d55">⊕ Position fox estimée</div>
       <div class="popup-meta">
         Lat : ${intLat.toFixed(4)}<br>
         Lon : ${intLon.toFixed(4)}<br>
         Erreur RMS : ${rms.toFixed(2)}°
       </div>
-    `);
+    `;
+
+  intersectionState = {
+    intLat,
+    intLon,
+    rms,
+    baseCircleR,
+    baseZoom: map.getZoom()
+  };
+
+  intersectionMarker = L.marker([intLat, intLon], {
+    icon: buildIntersectionIcon(baseCircleR)
+  }).bindPopup(popupHtml);
+
+  updateIntersectionMarkerZoomScale();
   if (!intersectionHidden) intersectionMarker.addTo(map);
 
   const el = document.getElementById('intersectionResult');
@@ -3724,6 +3931,7 @@ function editBearing(id) {
   bearings = bearings.filter(x => x.id !== id);
   renderList();
   if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
+  intersectionState = null;
   document.getElementById('intersectionResult').style.display = 'none';
 
   // Basculer sur l'onglet de saisie
@@ -3766,7 +3974,7 @@ function toggleBearingVisibility(id) {
   }
   renderList();
   if (bearings.filter(x => !x.hidden).length >= 2) computeIntersection();
-  else if (intersectionMarker) { map.removeLayer(intersectionMarker); intersectionMarker = null; document.getElementById('intersectionResult').style.display='none'; }
+  else if (intersectionMarker) { map.removeLayer(intersectionMarker); intersectionMarker = null; intersectionState = null; document.getElementById('intersectionResult').style.display='none'; }
 }
 
 function removeBearing(id) {
@@ -3782,6 +3990,7 @@ function removeBearing(id) {
   renderList();
   if (intersectionMarker && bearings.length < 2) {
     intersectionMarker.remove(); intersectionMarker = null;
+    intersectionState = null;
     document.getElementById('intersectionResult').style.display = 'none';
   } else if (bearings.length >= 2) {
     computeIntersection();
@@ -3796,6 +4005,7 @@ function clearAll() {
   layers = {};
   bearings = [];
   if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
+  intersectionState = null;
   document.getElementById('intersectionResult').style.display = 'none';
   renderList();
   notify('Tous les relevés effacés');
@@ -4834,6 +5044,7 @@ async function fallbackOpen() {
 function restoreBearings(savedBearings, savedNegListenings) {
   bearings.forEach(b => { if (layers[b.id]) { layers[b.id].remove(); delete layers[b.id]; } });
   if (intersectionMarker) { intersectionMarker.remove(); intersectionMarker = null; }
+  intersectionState = null;
   document.getElementById('intersectionResult').style.display = 'none';
   bearings = [];
   // Nettoie les écoutes négatives existantes
