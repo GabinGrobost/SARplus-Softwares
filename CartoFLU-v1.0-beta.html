@@ -155,9 +155,11 @@
   .fox-search-zone {
     fill: url(#foxSearchHatchPattern) !important;
     fill-opacity: 1 !important;
-    stroke: #ff6b7d !important;
+    stroke: #ff7a8a !important;
     stroke-width: 2px !important;
-    stroke-dasharray: 8 7 !important;
+    stroke-dasharray: 8 6 !important;
+    stroke-linecap: round !important;
+    opacity: 1 !important;
   }
 
   .header-sep { flex: 1; }
@@ -2305,29 +2307,46 @@ function ensureFoxSearchPattern() {
   const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
   pattern.setAttribute('id', 'foxSearchHatchPattern');
   pattern.setAttribute('patternUnits', 'userSpaceOnUse');
-  pattern.setAttribute('width', '10');
-  pattern.setAttribute('height', '10');
+  pattern.setAttribute('width', '12');
+  pattern.setAttribute('height', '12');
   pattern.setAttribute('patternTransform', 'rotate(45)');
 
   const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  bg.setAttribute('width', '10');
-  bg.setAttribute('height', '10');
-  bg.setAttribute('fill', 'rgba(255,107,125,0.10)');
+  bg.setAttribute('width', '12');
+  bg.setAttribute('height', '12');
+  bg.setAttribute('fill', 'rgba(255,122,138,0.14)');
   pattern.appendChild(bg);
 
   const stripe = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   stripe.setAttribute('x1', '0');
   stripe.setAttribute('y1', '0');
   stripe.setAttribute('x2', '0');
-  stripe.setAttribute('y2', '10');
-  stripe.setAttribute('stroke', '#ff6b7d');
-  stripe.setAttribute('stroke-width', '3');
-  stripe.setAttribute('opacity', '0.75');
+  stripe.setAttribute('y2', '12');
+  stripe.setAttribute('stroke', '#ff7a8a');
+  stripe.setAttribute('stroke-width', '2.2');
+  stripe.setAttribute('opacity', '0.9');
   pattern.appendChild(stripe);
 
   defs.appendChild(pattern);
 }
 ensureFoxSearchPattern();
+
+
+function applyFoxSearchZoneStyle(layer) {
+  if (!layer?.getElement) return;
+  ensureFoxSearchPattern();
+  const path = layer.getElement();
+  if (!path) return;
+
+  path.classList.add('fox-search-zone');
+  path.setAttribute('fill', 'url(#foxSearchHatchPattern)');
+  path.setAttribute('fill-opacity', '1');
+  path.setAttribute('stroke', '#ff7a8a');
+  path.setAttribute('stroke-width', '2');
+  path.setAttribute('stroke-dasharray', '8 6');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('opacity', '1');
+}
 
 const BASEMAPS = {
   osm: {
@@ -2571,6 +2590,7 @@ function toggleIntersectionVisibility() {
     if (intersectionHidden) intersectionMarker.remove();
     else {
       intersectionMarker.addTo(map);
+      applyFoxSearchZoneStyle(intersectionMarker);
       intersectionMarker.bringToFront();
     }
   }
@@ -4978,18 +4998,21 @@ function computeIntersection(silent = false) {
   ensureFoxSearchPattern();
   intersectionMarker = L.circle([intLat, intLon], {
     radius: uncertaintyRadiusM,
-    color: '#ff6b7d',
+    color: '#ff7a8a',
     weight: 2,
-    opacity: 0.95,
-    dashArray: '8,7',
+    opacity: 1,
+    dashArray: '8,6',
     className: 'fox-search-zone',
-    fillColor: '#ff6b7d',
-    fillOpacity: 0.12
+    fillColor: '#ff7a8a',
+    fillOpacity: 0.18
   }).bindPopup(popupHtml);
+
+  intersectionMarker.on('add', () => applyFoxSearchZoneStyle(intersectionMarker));
 
   updateIntersectionMarkerZoomScale();
   if (!intersectionHidden) {
     intersectionMarker.addTo(map);
+    applyFoxSearchZoneStyle(intersectionMarker);
     intersectionMarker.bringToFront();
   }
 
