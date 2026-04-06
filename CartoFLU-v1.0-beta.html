@@ -897,7 +897,7 @@
     border-radius: 50%;
   }
 
-  /* CONTEXT MENU — Envoyer station */
+  /* CONTEXT MENU — Carte */
   #mapContextMenu {
     display: none;
     position: fixed;
@@ -907,7 +907,7 @@
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.7);
     font-family: 'Share Tech Mono', monospace;
-    min-width: 260px;
+    min-width: 300px;
     overflow: hidden;
   }
   #mapContextMenu.open { display: block; }
@@ -921,7 +921,7 @@
     border-bottom: 1px solid #ddd;
     background: #f0f0f0;
   }
-  .ctx-station {
+  .ctx-item {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -931,8 +931,44 @@
     letter-spacing: 1px;
     transition: background .12s;
     color: #111;
+    border-bottom: 1px solid #ececec;
   }
-  .ctx-station:hover { background: rgba(57,255,20,0.12); }
+  .ctx-item:hover { background: rgba(57,255,20,0.12); }
+  .ctx-item:last-child { border-bottom: none; }
+  .ctx-label {
+    flex: 1;
+  }
+  .ctx-arrow {
+    font-size: 14px;
+    color: #1a7a00;
+  }
+
+  .ctx-submenu {
+    display: none;
+    margin: 0;
+    border-top: 1px solid #ddd;
+    background: #fafafa;
+  }
+  .ctx-submenu.open { display: block; }
+  .ctx-submenu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 18px 8px 30px;
+    cursor: pointer;
+    font-size: 15px;
+    letter-spacing: 1px;
+    color: #111;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .ctx-submenu-item:last-child { border-bottom: none; }
+  .ctx-submenu-item:hover { background: rgba(57,255,20,0.14); }
+  .ctx-submenu-note {
+    padding: 10px 18px 10px 30px;
+    font-size: 12px;
+    color: #666;
+    font-style: italic;
+  }
   .ctx-dot {
     width: 13px; height: 13px;
     border-radius: 50%;
@@ -1736,8 +1772,18 @@
 </div>
 
 <div id="mapContextMenu">
-  <div class="ctx-title">➤ Envoyer une station ici</div>
-  <div id="ctxStationList"></div>
+  <div class="ctx-title">➤ Actions carte</div>
+  <div class="ctx-item" onclick="ctxAddBearingHere()">
+    <span class="ctx-label">Ajouter un relevé ici</span>
+  </div>
+  <div class="ctx-item" onclick="toggleCtxStationsSubmenu(event)">
+    <span class="ctx-label">Envoyer une station ici</span>
+    <span class="ctx-arrow">▸</span>
+  </div>
+  <div id="ctxStationList" class="ctx-submenu"></div>
+  <div class="ctx-item" onclick="ctxShowLocationInfo()">
+    <span class="ctx-label">Info localisation</span>
+  </div>
 </div>
 
 <div class="notif" id="notif"></div>
@@ -2562,13 +2608,14 @@ function buildSendPopup(cs, color, lat, lng) {
     </div>`;
 }
 
-map.on('contextmenu', e => {
-  L.DomEvent.preventDefault(e.originalEvent);
-  _ctxLatLng = e.latlng;
-
-  const checked = Array.from(
+function getCheckedStations() {
+  return Array.from(
     document.querySelectorAll('.rollcall-station input[type="checkbox"]:checked')
   ).map(cb => cb.value.toUpperCase());
+}
+
+function buildCtxStationsSubmenu() {
+  const checked = getCheckedStations();
 
   // Filtre : exclut les stations qui ont déjà un repère
   const available = checked.filter(cs => !hasSendMarker(cs));
@@ -2580,7 +2627,7 @@ map.on('contextmenu', e => {
   if (available.length) {
     html += available.map(cs => {
       const color = callsignColors[cs] || 'var(--accent)';
-      return `<div class="ctx-station" onclick="sendStationHere('${cs}')">
+      return `<div class="ctx-submenu-item" onclick="sendStationHere('${cs}')">
         <div class="ctx-dot" style="background:${color};box-shadow:0 0 5px ${color}"></div>
         <span style="color:${color}">${cs}</span>
       </div>`;
@@ -2588,19 +2635,34 @@ map.on('contextmenu', e => {
   }
 
   if (already.length) {
-    html += `<div style="padding:5px 14px 3px;font-size:9px;letter-spacing:1px;color:#ff2d55;text-transform:uppercase;border-top:1px solid rgba(255,45,85,0.3);margin-top:4px;">Déjà envoyées</div>`;
+    html += `<div style="padding:8px 18px 4px 30px;font-size:9px;letter-spacing:1px;color:#ff2d55;text-transform:uppercase;border-top:1px solid rgba(255,45,85,0.3);margin-top:4px;">Déjà envoyées</div>`;
     html += already.map(cs => {
       const color = callsignColors[cs] || '#ff2d55';
-      return `<div class="ctx-station" style="opacity:0.6;cursor:default;">
+      return `<div class="ctx-submenu-item" style="opacity:0.6;cursor:default;">
         <div class="ctx-dot" style="background:${color}"></div>
         <span style="color:${color}">${cs} ✓</span>
       </div>`;
     }).join('');
   }
 
-  if (!checked.length) html = '<div class="ctx-empty">Aucune station présente cochée</div>';
+  if (!checked.length) html = '<div class="ctx-submenu-note">Aucune station présente cochée</div>';
+  if (checked.length && !available.length && already.length) {
+    html = `<div class="ctx-submenu-note">Toutes les stations cochées sont déjà envoyées.</div>${html}`;
+  }
 
   list.innerHTML = html;
+}
+
+function closeMapContextMenu() {
+  const menu = document.getElementById('mapContextMenu');
+  menu.classList.remove('open');
+  document.getElementById('ctxStationList').classList.remove('open');
+}
+
+map.on('contextmenu', e => {
+  L.DomEvent.preventDefault(e.originalEvent);
+  _ctxLatLng = e.latlng;
+  buildCtxStationsSubmenu();
 
   const menu = document.getElementById('mapContextMenu');
   menu.classList.add('open');
@@ -2613,19 +2675,71 @@ map.on('contextmenu', e => {
   });
 });
 
+function toggleCtxStationsSubmenu(event) {
+  if (event) event.stopPropagation();
+  document.getElementById('ctxStationList').classList.toggle('open');
+}
+
+function ctxAddBearingHere() {
+  closeMapContextMenu();
+  if (!_ctxLatLng) return;
+
+  if (!sidebarVisible) toggleSidebar();
+  switchTab('add');
+  syncAllFormats(_ctxLatLng.lat, _ctxLatLng.lng, null);
+  map.openPopup(
+    `<div class="popup-title" style="color:var(--accent2)">📍 Nouveau relevé</div>
+     <div class="popup-meta">Position injectée dans l'onglet Relevé.<br>
+     Lat : ${_ctxLatLng.lat.toFixed(4)}<br>Lon : ${_ctxLatLng.lng.toFixed(4)}</div>`,
+    _ctxLatLng
+  );
+  notify('📍 Onglet Relevé prérempli avec la position du clic droit');
+}
+
+async function ctxShowLocationInfo() {
+  closeMapContextMenu();
+  if (!_ctxLatLng) return;
+
+  const lat = _ctxLatLng.lat;
+  const lng = _ctxLatLng.lng;
+  let addr = 'Adresse indisponible';
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&format=jsonv2`;
+    const resp = await fetch(url, { headers: { 'Accept-Language': 'fr' } });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data && data.display_name) addr = data.display_name;
+    }
+  } catch(_) {}
+
+  if (window._ctxInfoMarker) window._ctxInfoMarker.remove();
+  window._ctxInfoMarker = L.circleMarker([lat, lng], {
+    radius: 7,
+    color: 'var(--accent2)',
+    fillColor: 'var(--accent2)',
+    fillOpacity: 0.9,
+    weight: 2
+  }).addTo(map);
+
+  window._ctxInfoMarker.bindPopup(`
+    <div class="popup-title" style="color:var(--accent2)">ℹ️ Info localisation</div>
+    <div class="popup-meta">Lat : ${lat.toFixed(5)}<br>Lon : ${lng.toFixed(5)}<br><br>${addr}</div>
+  `).openPopup();
+}
+
 document.addEventListener('click', e => {
   if (!e.target.closest('#mapContextMenu')) {
-    document.getElementById('mapContextMenu').classList.remove('open');
+    closeMapContextMenu();
   }
 });
 document.addEventListener('contextmenu', e => {
   if (!e.target.closest('.leaflet-container')) {
-    document.getElementById('mapContextMenu').classList.remove('open');
+    closeMapContextMenu();
   }
 });
 
 function sendStationHere(cs) {
-  document.getElementById('mapContextMenu').classList.remove('open');
+  closeMapContextMenu();
   if (!_ctxLatLng) return;
   const { lat, lng } = _ctxLatLng;
 
