@@ -1922,11 +1922,6 @@
         <div style="margin-top:6px;font-family:'Share Tech Mono',monospace;font-size:10px;opacity:0.75;letter-spacing:1px;">Calcul automatique immédiat à chaque ajout, modification, masquage ou suppression de relevé</div>
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-secondary" style="flex:1" onclick="centerIntersection()">🎯 Centrer la carte</button>
-          <button class="btn btn-eye" id="intersectionEyeBtn" title="Masquer/afficher l'intersection"
-            onclick="toggleIntersectionVisibility()"
-            style="display:inline-flex;align-items:center;justify-content:center;padding:0 10px;">
-            <svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-          </button>
         </div>
       </div>
 
@@ -2569,31 +2564,11 @@ function updateAllLabelPos() {
 }
 
 let intersectionMarker = null;
-let intersectionHidden = false;  // visible par défaut si calculé
 let intersectionState = null;
 
 function updateIntersectionMarkerZoomScale() {
   // Conservé pour compatibilité: la zone d'intersection est désormais en mètres
   // (L.circle), donc son comportement visuel est automatiquement cohérent au zoom.
-}
-
-function toggleIntersectionVisibility() {
-  intersectionHidden = !intersectionHidden;
-  const btn = document.getElementById('intersectionEyeBtn');
-  const eyeOpen = `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`;
-  const eyeClosed = `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L15 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 3.2C7 3.07 7.5 3 8 3c3 0 5.5 2.5 6.5 4-.35.6-.8 1.2-1.35 1.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><path d="M3.3 5.1C2.45 6 1.7 7.1 1.5 7c1 1.5 3.5 4 6.5 4 1.1 0 2.1-.3 3-.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><circle cx="8" cy="7" r="1.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="2 2"/></svg>`;
-  if (btn) {
-    btn.innerHTML = intersectionHidden ? eyeClosed : eyeOpen;
-    btn.classList.toggle('hidden', intersectionHidden);
-  }
-  if (intersectionMarker) {
-    if (intersectionHidden) intersectionMarker.remove();
-    else {
-      intersectionMarker.addTo(map);
-      applyFoxSearchZoneStyle(intersectionMarker);
-      intersectionMarker.bringToFront();
-    }
-  }
 }
 let pickMode = false;
 let previewLayer = null;   // prévisualisation azimut en temps réel
@@ -5015,11 +4990,9 @@ function computeIntersection(silent = false) {
   intersectionMarker.on('add', () => applyFoxSearchZoneStyle(intersectionMarker));
 
   updateIntersectionMarkerZoomScale();
-  if (!intersectionHidden) {
-    intersectionMarker.addTo(map);
-    applyFoxSearchZoneStyle(intersectionMarker);
-    intersectionMarker.bringToFront();
-  }
+  intersectionMarker.addTo(map);
+  applyFoxSearchZoneStyle(intersectionMarker);
+  intersectionMarker.bringToFront();
 
   Object.values(layers).forEach(layer => layer?.remove && layer.remove());
   Object.keys(layers).forEach(id => delete layers[id]);
