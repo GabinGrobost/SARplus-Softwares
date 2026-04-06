@@ -2126,7 +2126,10 @@ function toggleIntersectionVisibility() {
   }
   if (intersectionMarker) {
     if (intersectionHidden) intersectionMarker.remove();
-    else intersectionMarker.addTo(map);
+    else {
+      intersectionMarker.addTo(map);
+      intersectionMarker.bringToFront();
+    }
   }
 }
 let pickMode = false;
@@ -4095,11 +4098,14 @@ function computeIntersection(silent = false) {
     weight: 2,
     opacity: 0.95,
     fillColor: '#ff2d55',
-    fillOpacity: 0.18
+    fillOpacity: 0.45
   }).bindPopup(popupHtml);
 
   updateIntersectionMarkerZoomScale();
-  if (!intersectionHidden) intersectionMarker.addTo(map);
+  if (!intersectionHidden) {
+    intersectionMarker.addTo(map);
+    intersectionMarker.bringToFront();
+  }
 
   Object.values(layers).forEach(layer => layer?.remove && layer.remove());
   Object.keys(layers).forEach(id => delete layers[id]);
