@@ -1543,22 +1543,6 @@
         </div>
         </div><!-- /azimutFields -->
       </div>
-
-      <div class="form-section">
-        <h3>// Couleur</h3>
-        <div class="radio-group" id="colorPicker">
-          <div class="radio-btn selected" style="border-color:#00d4ff;color:#00d4ff" data-color="#00d4ff" onclick="selectColor(this)">CYAN</div>
-          <div class="radio-btn" data-color="#ff6b35" onclick="selectColor(this)">ORANGE</div>
-          <div class="radio-btn" data-color="#39ff14" onclick="selectColor(this)">VERT</div>
-          <div class="radio-btn" data-color="#ff2d55" onclick="selectColor(this)">ROUGE</div>
-          <div class="radio-btn" data-color="#bf5fff" onclick="selectColor(this)">VIOLET</div>
-          <div class="radio-btn" data-color="#ffff00" onclick="selectColor(this)">JAUNE</div>
-          <div class="radio-btn" data-color="#1a1a1a" onclick="selectColor(this)">NOIR</div>
-          <div class="radio-btn" data-color="#0044ff" onclick="selectColor(this)">BLEU</div>
-          <div class="radio-btn" data-color="#808080" onclick="selectColor(this)">GRIS</div>
-        </div>
-      </div>
-
       <button class="btn btn-primary" id="addBearingBtn" onclick="addBearing()">⊕ TRACER LE RELEVÉ</button>
     </div>
 
@@ -1581,7 +1565,7 @@
       </div>
 
       <div style="display:flex;gap:6px;margin-bottom:4px">
-        <button class="btn btn-secondary" style="flex:1" onclick="computeIntersection()">⊕ Calculer intersection</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="computeIntersection()">⊕ Calculer la zone de recherche</button>
         <button class="btn btn-danger" onclick="clearAll()">✕ Tout effacer</button>
       </div>
 
@@ -1793,21 +1777,11 @@
             rgba(255,45,85,0.1) 4px, rgba(255,45,85,0.1) 10px
           );
           border:1px solid rgba(255,45,85,0.9);"></div>
-        <span>Secteur incertitude</span>
+        <span>Zone de Recherche</span>
       </div>
       <div class="legend-item">
         <div class="legend-dot" style="background:var(--accent)"></div>
         <span>Station réceptrice</span>
-      </div>
-      <div class="legend-item">
-        <div style="width:18px;height:18px;border-radius:3px;flex-shrink:0;
-          background: repeating-linear-gradient(
-            45deg,
-            rgba(255,45,85,0.7) 0px, rgba(255,45,85,0.7) 3px,
-            rgba(255,45,85,0.15) 3px, rgba(255,45,85,0.15) 8px
-          );
-          border:1.5px solid var(--danger);"></div>
-        <span>Intersection estimée</span>
       </div>
     </div>
     <!-- Alertes watchdog stations -->
