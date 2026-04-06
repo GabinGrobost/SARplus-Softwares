@@ -3982,6 +3982,21 @@ function refreshIntersection(auto = true) {
   computeIntersection(auto);
 }
 
+function angularDiffDeg(a, b) {
+  return ((a - b) + 540) % 360 - 180;
+}
+
+function robustScaleFromResiduals(residuals) {
+  if (!residuals.length) return 6;
+  const absResiduals = residuals.map(v => Math.abs(v)).sort((a, b) => a - b);
+  const mid = Math.floor(absResiduals.length / 2);
+  const median = absResiduals.length % 2 === 0
+    ? (absResiduals[mid - 1] + absResiduals[mid]) / 2
+    : absResiduals[mid];
+  const sigmaMad = median * 1.4826;
+  return Math.max(2, Math.min(25, sigmaMad || 6));
+}
+
 function computeIntersection(silent = false) {
   const visible = bearings.filter(b => !b.hidden);
   if (visible.length < 2) {
@@ -4003,52 +4018,91 @@ function computeIntersection(silent = false) {
     const dx = p1.x - p0.x;
     const dy = p1.y - p0.y;
     const len = Math.sqrt(dx * dx + dy * dy);
-    return { x0: p0.x, y0: p0.y, dx: dx / len, dy: dy / len };
+    const baseWeight = Math.max(0.4, Math.min(8, qrkToWeight(b.qrk)));
+    return { x0: p0.x, y0: p0.y, dx: dx / len, dy: dy / len, bearingData: b, baseWeight };
   });
 
-  let A00 = 0, A01 = 0, A11 = 0, B0 = 0, B1 = 0;
-  for (const l of lines) {
-    const { x0, y0, dx, dy } = l;
-    const nx = -dy, ny = dx;
-    A00 += nx * nx;
-    A01 += nx * ny;
-    A11 += ny * ny;
-    const c = nx * x0 + ny * y0;
-    B0 += nx * c;
-    B1 += ny * c;
-  }
+  const solveWeightedLeastSquares = (activeLines, perLineWeight = null) => {
+    let A00 = 0, A01 = 0, A11 = 0, B0 = 0, B1 = 0;
+    for (let i = 0; i < activeLines.length; i++) {
+      const l = activeLines[i];
+      const { x0, y0, dx, dy } = l;
+      const nx = -dy, ny = dx;
+      const w = Math.max(0.02, perLineWeight ? perLineWeight[i] : l.baseWeight);
+      A00 += w * nx * nx;
+      A01 += w * nx * ny;
+      A11 += w * ny * ny;
+      const c = nx * x0 + ny * y0;
+      B0 += w * nx * c;
+      B1 += w * ny * c;
+    }
+    const detLocal = A00 * A11 - A01 * A01;
+    if (Math.abs(detLocal) < EPS) return null;
+    const X = (B0 * A11 - B1 * A01) / detLocal;
+    const Y = (A00 * B1 - A01 * B0) / detLocal;
+    return { X, Y, A00, A01, A11, det: detLocal };
+  };
 
-  const det = A00 * A11 - A01 * A01;
-  if (Math.abs(det) < EPS) {
+  let activeLines = [...lines];
+  let solution = solveWeightedLeastSquares(activeLines);
+  if (!solution) {
     clearIntersectionDisplay();
     if (!silent) notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
     return;
   }
 
-  const X = (B0 * A11 - B1 * A01) / det;
-  const Y = (A00 * B1 - A01 * B0) / det;
+  // Rejet robuste des relevés incohérents (zone très éloignée de la convergence)
+  let usedStable = false;
+  for (let pass = 0; pass < 3; pass++) {
+    const intLonPass = solution.X;
+    const intLatPass = fromMerc(solution.Y);
+    const residualAngles = activeLines.map(l => {
+      const az = initialBearingDeg(l.bearingData.lat, l.bearingData.lon, intLatPass, intLonPass);
+      return Math.abs(angularDiffDeg(az, l.bearingData.bearing));
+    });
+    const robustSigma = robustScaleFromResiduals(residualAngles);
+    const gateDeg = Math.max(8, Math.min(35, robustSigma * 2.5));
+    const filtered = activeLines.filter((_, i) => residualAngles[i] <= gateDeg);
+
+    if (filtered.length < 2 || filtered.length === activeLines.length) {
+      usedStable = true;
+      break;
+    }
+    activeLines = filtered;
+    solution = solveWeightedLeastSquares(activeLines);
+    if (!solution) break;
+  }
+
+  if (!solution || !usedStable) {
+    clearIntersectionDisplay();
+    if (!silent) notify("⚠ Relevés parallèles, impossible de calculer l'intersection", true);
+    return;
+  }
+
+  const { X, Y, A00, A01, A11, det } = solution;
   const intLon = X;
   const intLat = fromMerc(Y);
 
   let rmsSum = 0;
-  visible.forEach(b => {
+  activeLines.forEach(l => {
+    const b = l.bearingData;
     const realAz = initialBearingDeg(b.lat, b.lon, intLat, intLon);
-    let diff = ((realAz - b.bearing) + 540) % 360 - 180;
+    let diff = angularDiffDeg(realAz, b.bearing);
     rmsSum += diff * diff;
   });
-  const rms = Math.sqrt(rmsSum / visible.length);
+  const rms = Math.sqrt(rmsSum / activeLines.length);
 
   if (intersectionMarker) intersectionMarker.remove();
 
   let rss = 0;
-  for (const l of lines) {
+  for (const l of activeLines) {
     const nx = -l.dy, ny = l.dx;
     const c = nx * l.x0 + ny * l.y0;
     const resid = nx * X + ny * Y - c;
     rss += resid * resid;
   }
 
-  const dof = Math.max(1, visible.length - 2);
+  const dof = Math.max(1, activeLines.length - 2);
   const sigma2 = rss / dof;
   const invDet = 1 / det;
   const covXX = sigma2 * A11 * invDet;
@@ -4085,12 +4139,13 @@ function computeIntersection(silent = false) {
         ${intersectionDms}<br>
         ${intersectionUtm}<br>
         ${intersectionLocator}<br>
+        Relevés retenus : ${activeLines.length}/${visible.length}<br>
         Erreur RMS : ${rms.toFixed(2)}°<br>
         Rayon estimé : ${uncertaintyRadiusKm.toFixed(2)} km
       </div>
     `;
 
-  intersectionState = { intLat, intLon, rms, uncertaintyRadiusM };
+  intersectionState = { intLat, intLon, rms, uncertaintyRadiusM, keptBearings: activeLines.length, totalBearings: visible.length };
 
   intersectionMarker = L.circle([intLat, intLon], {
     radius: uncertaintyRadiusM,
@@ -4121,10 +4176,16 @@ ${intLon.toFixed(4)}° E`;
   document.getElementById('intersectionUTM').textContent =
     intersectionUtm;
   document.getElementById('intersectionError').textContent =
-    intersectionLocator;
+    `${intersectionLocator} — Relevés retenus ${activeLines.length}/${visible.length}`;
 
   window._intersectionLatLon = [intLat, intLon];
-  if (!silent) notify(`Intersection calculée ✓ (RMS ${rms.toFixed(1)}°)`);
+  if (!silent) {
+    const ignored = visible.length - activeLines.length;
+    const msg = ignored > 0
+      ? `Intersection calculée ✓ (RMS ${rms.toFixed(1)}°, ${ignored} relevé(s) incohérent(s) ignoré(s))`
+      : `Intersection calculée ✓ (RMS ${rms.toFixed(1)}°)`;
+    notify(msg);
+  }
 }
 
 function centerIntersection() {
