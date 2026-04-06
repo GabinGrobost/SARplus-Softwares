@@ -103,6 +103,48 @@
   .header-menu-btn:hover { border-color: var(--accent); background: rgba(0,212,255,0.07); box-shadow: var(--glow); }
   .header-menu-btn.active { background: rgba(0,212,255,0.12); border-color: var(--accent); }
 
+  .header-ops {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    /*! justify-content: center; */
+    gap: 10px;
+    padding: 0 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .header-ops::-webkit-scrollbar { display: none; }
+
+  .header-op-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    padding: 0 16px;
+    background: rgba(0,0,0,0.22);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: var(--accent);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all .2s;
+    flex: 0 0 auto;
+  }
+  .header-op-btn:hover {
+    border-color: var(--accent2);
+    color: var(--accent2);
+    background: rgba(255,107,53,0.08);
+    box-shadow: 0 0 10px rgba(255,107,53,0.18);
+  }
+  .header-op-btn:active {
+    transform: translateY(1px);
+  }
+
   .header-sep { flex: 1; }
 
   /* ROLL CALL */
@@ -1229,7 +1271,11 @@
   <button id="sidebarToggleBtn" class="header-menu-btn" title="Afficher le menu latéral" onclick="toggleSidebar()">☰ MENU</button>
   <div class="logo">SAR<span>+</span></div>
   <div style="font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:2px;color:var(--accent);white-space:nowrap;"><span style="color:var(--accent2);">S</span>earch <span style="color:var(--accent2);">A</span>nd <span style="color:var(--accent2);">R</span>escue <span style="color:var(--accent2);">+</span></div>
-  <div class="header-sep"></div>
+  <nav class="header-ops" aria-label="Menu des opérations">
+    <button class="header-op-btn" type="button" onclick="openOperation()">Ouvrir une operation</button>
+    <button class="header-op-btn" type="button" onclick="joinOperation()">Rejoindre une operation</button>
+    <button class="header-op-btn" type="button" onclick="customOperationAction()">Bouton a definir</button>
+  </nav>
   <!-- APPEL STATIONS -->
   <div class="rollcall-btn">
     <div id="rollcallToggle" onclick="toggleRollcall()">
@@ -2309,6 +2355,20 @@ map.on('click', e => {
   togglePickMode();
   notify('Position capturée ✓');
 });
+
+// ─── MENU OPERATIONS — Barre d'actions header ───────────────────────────────
+
+function openOperation() {
+  notify('📂 Ouvrir une operation: action a raccorder');
+}
+
+function joinOperation() {
+  notify('🤝 Rejoindre une operation: action a raccorder');
+}
+
+function customOperationAction() {
+  notify('🛠 Bouton a definir: action en attente');
+}
 
 // ─── ROLL CALL — Liste d'appel stations ─────────────────────────────────────
 
