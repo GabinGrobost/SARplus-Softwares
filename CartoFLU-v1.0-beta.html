@@ -1983,43 +1983,9 @@ let intersectionMarker = null;
 let intersectionHidden = true;  // masqué par défaut
 let intersectionState = null;
 
-function buildIntersectionIcon(circleR) {
-  const sz = circleR * 2 + 10;
-  const cx = sz / 2, cy = sz / 2;
-  const uid = `int_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-  const svgHatch = `
-    <svg width="${sz}" height="${sz}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="${uid}_hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="8" stroke="#ff2d55" stroke-width="1.5" stroke-opacity="0.55"/>
-        </pattern>
-        <clipPath id="${uid}_clip">
-          <circle cx="${cx}" cy="${cy}" r="${circleR}"/>
-        </clipPath>
-      </defs>
-      <circle cx="${cx}" cy="${cy}" r="${circleR}" fill="url(#${uid}_hatch)" clip-path="url(#${uid}_clip)" />
-      <circle cx="${cx}" cy="${cy}" r="${circleR}" fill="none" stroke="#ff2d55" stroke-width="2" stroke-dasharray="6,3"/>
-      <line x1="${cx-10}" y1="${cy}" x2="${cx+10}" y2="${cy}" stroke="#ff2d55" stroke-width="2"/>
-      <line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="#ff2d55" stroke-width="2"/>
-      <circle cx="${cx}" cy="${cy}" r="4" fill="#ff2d55" stroke="#0a0e14" stroke-width="1.5"/>
-    </svg>`;
-
-  return L.divIcon({
-    html: svgHatch,
-    iconSize: [sz, sz],
-    iconAnchor: [cx, cy],
-    className: ''
-  });
-}
-
 function updateIntersectionMarkerZoomScale() {
-  if (!intersectionMarker || !intersectionState) return;
-
-  const scale = map.getZoomScale(map.getZoom(), intersectionState.baseZoom);
-  const circleR = Math.max(12, Math.round(intersectionState.baseCircleR * scale));
-  intersectionMarker.setIcon(buildIntersectionIcon(circleR));
-  intersectionMarker.setLatLng([intersectionState.intLat, intersectionState.intLon]);
+  // Conservé pour compatibilité: la zone d'intersection est désormais en mètres
+  // (L.circle), donc son comportement visuel est automatiquement cohérent au zoom.
 }
 
 function toggleIntersectionVisibility() {
@@ -3536,6 +3502,18 @@ function destinationPoint(lat, lon, bearingDeg, distKm) {
   return [lat2 * 180/Math.PI, lon2 * 180/Math.PI];
 }
 
+function greatCircleDistanceKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 // Numéro d'ordre par indicatif
 function getBearingNum(item) {
   const cs = item.callsign.toUpperCase();
@@ -3759,15 +3737,25 @@ function computeIntersection() {
   // Draw intersection
   if (intersectionMarker) intersectionMarker.remove();
 
-  // Rayon de base du cercle hachuré : basé sur le RMS (min 30px, max 90px)
-  // puis rescalé à chaque zoom pour suivre l'échelle de la carte.
-  const baseCircleR = Math.min(90, Math.max(30, Math.round(rms * 10)));
+  // Rayon d'incertitude géographique (mètres) :
+  // - cohérent quel que soit le zoom (L.circle est en mètres)
+  // - proportionnel au RMS angulaire et à la distance moyenne aux stations
+  // - borné pour éviter des cas extrêmes illisibles
+  const avgDistKm = visible.reduce((sum, b) => (
+    sum + greatCircleDistanceKm(b.lat, b.lon, intLat, intLon)
+  ), 0) / visible.length;
+  const rmsRad = Math.max(0.01, rms * DEG);
+  const rawRadiusKm = avgDistKm * Math.tan(rmsRad);
+  const uncertaintyRadiusKm = Math.min(120, Math.max(0.25, rawRadiusKm));
+  const uncertaintyRadiusM = uncertaintyRadiusKm * 1000;
+
   const popupHtml = `
       <div class="popup-title" style="color:#ff2d55">⊕ Position fox estimée</div>
       <div class="popup-meta">
         Lat : ${intLat.toFixed(4)}<br>
         Lon : ${intLon.toFixed(4)}<br>
-        Erreur RMS : ${rms.toFixed(2)}°
+        Erreur RMS : ${rms.toFixed(2)}°<br>
+        Rayon estimé : ${uncertaintyRadiusKm.toFixed(2)} km
       </div>
     `;
 
@@ -3775,12 +3763,16 @@ function computeIntersection() {
     intLat,
     intLon,
     rms,
-    baseCircleR,
-    baseZoom: map.getZoom()
+    uncertaintyRadiusM
   };
 
-  intersectionMarker = L.marker([intLat, intLon], {
-    icon: buildIntersectionIcon(baseCircleR)
+  intersectionMarker = L.circle([intLat, intLon], {
+    radius: uncertaintyRadiusM,
+    color: '#ff2d55',
+    weight: 2,
+    opacity: 0.95,
+    fillColor: '#ff2d55',
+    fillOpacity: 0.18
   }).bindPopup(popupHtml);
 
   updateIntersectionMarkerZoomScale();
