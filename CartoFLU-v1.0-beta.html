@@ -2065,7 +2065,6 @@
           <option value="topo">Topo</option>
           <option value="ignortho">Orthophotos</option>
           <option value="ignscan25">IGN SCAN 25</option>
-          <option value="local">📴 Local (hors ligne)</option>
         </select>
       </div>
     </div>
@@ -2391,13 +2390,6 @@ const BASEMAPS = {
     attribution: '© Esri, Maxar, Earthstar Geographics',
     maxZoom: 19
   },
-  local: {
-    label: '📴 Local (hors ligne)',
-    url: 'http://localhost:8080/{z}/{x}/{y}.png',
-    attribution: '© OpenStreetMap — tuiles locales',
-    minZoom: 6,
-    maxZoom: 15
-  }
 };
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
@@ -2579,6 +2571,7 @@ let maintenanceMode = false;
 const runtimeConfig = {
   entityName: 'ADRASEC 25',
   aprsApiKey: '',
+  departementCode: '25',
   forceOffline: false,
   maintenance: false,
   softwareVersion: '1.0'
@@ -2611,6 +2604,7 @@ async function loadRuntimeConfig() {
     const cfg = await resp.json();
     runtimeConfig.entityName = String(cfg['entity-name'] ?? cfg.entityName ?? runtimeConfig.entityName);
     runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
+    runtimeConfig.departementCode = String(cfg['departement-code'] ?? cfg.departementCode ?? runtimeConfig.departementCode);
     runtimeConfig.forceOffline = !!(cfg['force-offline'] ?? cfg.forceOffline ?? runtimeConfig.forceOffline);
     runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
     runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
@@ -2622,6 +2616,7 @@ async function loadRuntimeConfig() {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadRuntimeConfig();
   applyRuntimeConfig();
+  startInitialInternetAccessCheck();
   updateSidebarToggleButton();
   updateStationList();
   updateOperationControls();
@@ -2927,6 +2922,7 @@ map.on('click', e => {
 
 let sarOperationMode = 'connected';
 let sarOperationCheckInFlight = false;
+let initialInternetAccessCheckPromise = null;
 let currentSarOperation = null;
 let lastSarOperationMeta = null;
 const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
@@ -3206,6 +3202,14 @@ async function hasInternetAccess() {
   return false;
 }
 
+function startInitialInternetAccessCheck() {
+  if (initialInternetAccessCheckPromise) return initialInternetAccessCheckPromise;
+  initialInternetAccessCheckPromise = hasInternetAccess()
+    .then(online => !!online)
+    .catch(() => false);
+  return initialInternetAccessCheckPromise;
+}
+
 function resetSarOperationForm() {
   const name = document.getElementById('sarOperationName');
   const ref = document.getElementById('sarOperationRef');
@@ -3351,7 +3355,9 @@ async function openOperation() {
   closeSarOperationOverlay();
   closeSarOfflineModal();
   try {
-    const online = await hasInternetAccess();
+    const online = initialInternetAccessCheckPromise
+      ? await initialInternetAccessCheckPromise
+      : await hasInternetAccess();
     if (online) {
       notify('Accès internet détecté ✓');
       openSarOperationOverlay('connected');
