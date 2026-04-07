@@ -3,6 +3,13 @@
   "departement-code": "25",
   "aprsfi-api-key": "",
   "force-offline": false,
+  "local-basemap-urls": {
+    "osmorg_local": "http://localhost:8080/osmorg_local/{z}/{x}/{y}.png",
+    "ignplan_local": "http://localhost:8080/ignplan_local/{z}/{x}/{y}.png",
+    "topo_local": "http://localhost:8080/topo_local/{z}/{x}/{y}.png",
+    "ignortho_local": "http://localhost:8080/ignortho_local/{z}/{x}/{y}.png",
+    "ignscan25_local": "http://localhost:8080/ignscan25_local/{z}/{x}/{y}.png"
+  },
   "maintenance": false,
   "software-version": "1.0"
 }

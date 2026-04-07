@@ -2394,6 +2394,7 @@ const BASEMAPS = {
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
 let currentBasemapKey = 'osm';
+let lastInternetAccessStatus = null;
 
 function promptIgnScan25ApiKey(force = false) {
   const existing = (localStorage.getItem(IGN_SCAN25_APIKEY_STORAGE) || '').trim();
@@ -2432,6 +2433,19 @@ function resolveBasemap(key, opts = {}) {
   return bm;
 }
 
+function resolveOfflineBasemap(key) {
+  const localBasemapUrls = runtimeConfig.localBasemapUrls || {};
+  const localUrl = (localBasemapUrls[`${key}_local`] || localBasemapUrls[key] || '').trim();
+  if (!localUrl) return null;
+  const bm = BASEMAPS[key] || BASEMAPS.osm;
+  return {
+    ...bm,
+    type: 'xyz',
+    url: localUrl,
+    attribution: `${bm.attribution} — serveur local`
+  };
+}
+
 function createBasemapLayer(bm, key = '') {
   const commonOptions = {
     attribution: bm.attribution,
@@ -2461,11 +2475,17 @@ function createBasemapLayer(bm, key = '') {
 
 let currentTileLayer = createBasemapLayer(resolveBasemap('osm') || BASEMAPS.osm, 'osm').addTo(map);
 
-function changeBasemap(key) {
-  const resolved = resolveBasemap(key);
+async function changeBasemap(key) {
+  const shouldUseOfflineBasemap = runtimeConfig.forceOffline || navigator.onLine === false || lastInternetAccessStatus === false;
+  const offlineCandidate = shouldUseOfflineBasemap ? resolveOfflineBasemap(key) : null;
+  const resolved = offlineCandidate || resolveBasemap(key);
   if (!resolved) {
     document.getElementById('basemapSelect').value = currentBasemapKey;
     return;
+  }
+
+  if (shouldUseOfflineBasemap && !offlineCandidate) {
+    notify(`⚠ Fond local manquant pour "${key}". Ajoutez "${key}_local" dans config.json`, true);
   }
 
   if (currentTileLayer) map.removeLayer(currentTileLayer);
@@ -2573,6 +2593,7 @@ const runtimeConfig = {
   aprsApiKey: '',
   departementCode: '25',
   forceOffline: false,
+  localBasemapUrls: {},
   maintenance: false,
   softwareVersion: '1.0'
 };
@@ -2606,6 +2627,9 @@ async function loadRuntimeConfig() {
     runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
     runtimeConfig.departementCode = String(cfg['departement-code'] ?? cfg.departementCode ?? runtimeConfig.departementCode);
     runtimeConfig.forceOffline = !!(cfg['force-offline'] ?? cfg.forceOffline ?? runtimeConfig.forceOffline);
+    runtimeConfig.localBasemapUrls = (cfg['local-basemap-urls'] && typeof cfg['local-basemap-urls'] === 'object')
+      ? cfg['local-basemap-urls']
+      : ((cfg.localBasemapUrls && typeof cfg.localBasemapUrls === 'object') ? cfg.localBasemapUrls : runtimeConfig.localBasemapUrls);
     runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
     runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
   } catch (e) {
@@ -3205,8 +3229,14 @@ async function hasInternetAccess() {
 function startInitialInternetAccessCheck() {
   if (initialInternetAccessCheckPromise) return initialInternetAccessCheckPromise;
   initialInternetAccessCheckPromise = hasInternetAccess()
-    .then(online => !!online)
-    .catch(() => false);
+    .then(online => {
+      lastInternetAccessStatus = !!online;
+      return lastInternetAccessStatus;
+    })
+    .catch(() => {
+      lastInternetAccessStatus = false;
+      return false;
+    });
   return initialInternetAccessCheckPromise;
 }
 
