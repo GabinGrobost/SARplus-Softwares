@@ -2549,10 +2549,14 @@ async function ensureLocalBasemapPrepared(key) {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.ok) {
-      notify(`⚠ Échec préparation cartes locales (${data.error || resp.status})`, true);
+      const detail = data.error || (Array.isArray(data.errors) ? data.errors[0] : '') || resp.status;
+      notify(`⚠ Échec préparation cartes locales (${detail})`, true);
       return;
     }
-    notify(`✓ Cartes locales préparées (${data.downloaded || 0} téléchargée(s), ${data.failed || 0} échec(s))`);
+    const suffix = (data.failed || 0) > 0 && Array.isArray(data.errors) && data.errors[0]
+      ? ` — 1er échec: ${data.errors[0]}`
+      : '';
+    notify(`✓ Cartes locales préparées (${data.downloaded || 0} téléchargée(s), ${data.failed || 0} échec(s))${suffix}`);
   } catch (e) {
     console.warn('[CartoFLU] prepare-local-basemap:', e);
     notify('⚠ Impossible de préparer les cartes locales', true);

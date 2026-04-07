@@ -76,6 +76,40 @@ if (!is_dir($localRoot) && !mkdir($localRoot, 0775, true) && !is_dir($localRoot)
 
 $downloaded = 0;
 $failed = 0;
+$errors = [];
+
+function fetchUrlBinary(string $url): string|false {
+    $url = str_replace('{s}', 'a', $url);
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 7,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_USERAGENT => 'CartoFLU/1.0 (+local tile seeding)',
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2
+        ]);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if (is_string($body) && $body !== '' && $code >= 200 && $code < 300) {
+            return $body;
+        }
+    }
+
+    $ctx = stream_context_create([
+        'http' => [
+            'timeout' => 20,
+            'follow_location' => 1,
+            'user_agent' => 'CartoFLU/1.0 (+local tile seeding)'
+        ]
+    ]);
+    $content = @file_get_contents($url, false, $ctx);
+    return (is_string($content) && $content !== '') ? $content : false;
+}
 
 function latLngToTile(float $lat, float $lon, int $zoom): array {
     $n = 2 ** $zoom;
@@ -110,15 +144,16 @@ for ($z = $minZoom; $z <= $maxZoom; $z++) {
                 continue;
             }
 
-            $ctx = stream_context_create(['http' => ['timeout' => 7]]);
-            $content = @file_get_contents($sourceUrl, false, $ctx);
+            $content = fetchUrlBinary($sourceUrl);
             if ($content === false || $content === '') {
                 $failed++;
+                if (count($errors) < 10) $errors[] = "download_failed:$z/$tx/$ty";
                 continue;
             }
 
             if (@file_put_contents($targetFile, $content, LOCK_EX) === false) {
                 $failed++;
+                if (count($errors) < 10) $errors[] = "write_failed:$z/$tx/$ty";
                 continue;
             }
             $downloaded++;
@@ -130,6 +165,7 @@ echo json_encode([
     'ok' => true,
     'downloaded' => $downloaded,
     'failed' => $failed,
+    'errors' => $errors,
     'path' => $basePart,
     'plan' => [
         'minZoom' => $minZoom,
