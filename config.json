@@ -2,6 +2,7 @@
   "entity-name": "ADRASEC 25",
   "departement-code": "25",
   "aprsfi-api-key": "",
+  "ignscan25-hash-key": "",
   "force-offline": false,
   "local-basemap-urls": {
     "osmorg_local": "http://localhost:8080/osmorg_local/{z}/{x}/{y}.png",

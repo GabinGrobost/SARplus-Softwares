@@ -2377,7 +2377,8 @@ const BASEMAPS = {
   ignmaps: {
     label: 'IGN Cartes',
     type: 'wms',
-    url: 'https://data.geopf.fr/wms-r/wms',
+    restricted: true,
+    url: 'https://data.geopf.fr/private/wms-r/',
     options: {
       layers: 'GEOGRAPHICALGRIDSYSTEMS.MAPS',
       format: 'image/png',
@@ -2390,7 +2391,8 @@ const BASEMAPS = {
   ignscan100: {
     label: 'IGN SCAN 100',
     type: 'wms',
-    url: 'https://data.geopf.fr/wms-r/wms',
+    restricted: true,
+    url: 'https://data.geopf.fr/private/wms-r/',
     options: {
       layers: 'SCAN100_PYR-JPEG_WLD_WM',
       format: 'image/jpeg',
@@ -2403,7 +2405,8 @@ const BASEMAPS = {
   ignscanoaci: {
     label: 'IGN SCAN OACI',
     type: 'wms',
-    url: 'https://data.geopf.fr/wms-r/wms',
+    restricted: true,
+    url: 'https://data.geopf.fr/private/wms-r/',
     options: {
       layers: 'SCANOACI_PYR-JPEG_WLD_WM',
       format: 'image/jpeg',
@@ -2416,7 +2419,8 @@ const BASEMAPS = {
   ignscan25tour: {
     label: 'IGN SCAN 25 Tour',
     type: 'wms',
-    url: 'https://data.geopf.fr/wms-r/wms',
+    restricted: true,
+    url: 'https://data.geopf.fr/private/wms-r/',
     options: {
       layers: 'SCAN25TOUR_PYR-JPEG_WLD_WM',
       format: 'image/jpeg',
@@ -2449,16 +2453,18 @@ const BASEMAPS = {
 };
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
+const IGN_HASH_PROTECTED_BASEMAPS = new Set(['ignscan25', 'ignmaps', 'ignscan100', 'ignscanoaci', 'ignscan25tour']);
 let currentBasemapKey = 'osmorg';
 let lastInternetAccessStatus = null;
 const localBasemapAutoInitAsked = new Set();
 
 function promptIgnScan25ApiKey(force = false) {
-  const existing = (localStorage.getItem(IGN_SCAN25_APIKEY_STORAGE) || '').trim();
+  const fromConfig = (runtimeConfig.ignScan25HashKey || '').trim();
+  const existing = (localStorage.getItem(IGN_SCAN25_APIKEY_STORAGE) || fromConfig).trim();
   if (existing && !force) return existing;
 
   const entered = window.prompt(
-    "IGN SCAN 25 nécessite une clé HASH cartes.gouv.fr.\nCollez votre clé pour activer ce fond :",
+    "Les fonds IGN protégés (SCAN 25 / SCAN 25 TOUR / SCAN 100 / SCAN OACI / Cartes) nécessitent une clé HASH cartes.gouv.fr.\nCollez votre clé pour activer ces fonds :",
     existing
   );
 
@@ -2467,7 +2473,7 @@ function promptIgnScan25ApiKey(force = false) {
   const clean = entered.trim();
   if (!clean) {
     localStorage.removeItem(IGN_SCAN25_APIKEY_STORAGE);
-    notify('⚠ IGN SCAN 25 nécessite une clé HASH cartes.gouv.fr', true);
+    notify('⚠ Les fonds IGN protégés nécessitent une clé HASH cartes.gouv.fr', true);
     return null;
   }
 
@@ -2478,12 +2484,13 @@ function promptIgnScan25ApiKey(force = false) {
 function resolveBasemap(key, opts = {}) {
   const bm = BASEMAPS[key] || BASEMAPS.osm;
 
-  if (key === 'ignscan25') {
+  if (IGN_HASH_PROTECTED_BASEMAPS.has(key)) {
     const apiKey = promptIgnScan25ApiKey(!!opts.forcePrompt);
     if (!apiKey) return null;
+    const joiner = bm.url.includes('?') ? '&' : '?';
     return {
       ...bm,
-      url: `${bm.url}?apikey=${encodeURIComponent(apiKey)}`
+      url: `${bm.url}${joiner}apikey=${encodeURIComponent(apiKey)}`
     };
   }
 
@@ -2806,6 +2813,7 @@ let maintenanceMode = false;
 const runtimeConfig = {
   entityName: 'ADRASEC 25',
   aprsApiKey: '',
+  ignScan25HashKey: '',
   departementCode: '25',
   forceOffline: false,
   localBasemapUrls: {},
@@ -2845,6 +2853,9 @@ async function loadRuntimeConfig() {
     const cfg = await resp.json();
     runtimeConfig.entityName = String(cfg['entity-name'] ?? cfg.entityName ?? runtimeConfig.entityName);
     runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
+    runtimeConfig.ignScan25HashKey = String(
+      cfg['ignscan25-hash-key'] ?? cfg.ignScan25HashKey ?? runtimeConfig.ignScan25HashKey
+    ).trim();
     runtimeConfig.departementCode = String(cfg['departement-code'] ?? cfg.departementCode ?? runtimeConfig.departementCode);
     runtimeConfig.forceOffline = !!(cfg['force-offline'] ?? cfg.forceOffline ?? runtimeConfig.forceOffline);
     runtimeConfig.localBasemapUrls = (cfg['local-basemap-urls'] && typeof cfg['local-basemap-urls'] === 'object')

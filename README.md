@@ -72,9 +72,10 @@ Pour une utilisation sans internet (terrain, exercice isolé) :
 
 1. Télécharger les tuiles OSM localement, avec Mobile Atlas Créator par exemple
 2. Lancer `serveur_tuiles.bat` (à placer à la racine du dossier des tuiles) — démarre un serveur Python sur `localhost:8080`
-3. Configurer `config.json` avec les URL de tuiles locales par fond:
+3. Configurer `config.json` avec la clé HASH IGN (pour fonds protégés SCAN/OACI/Cartes) et les URL de tuiles locales par fond:
 
 ```json
+"ignscan25-hash-key": "votre_cle_hash_cartes_gouv_fr",
 "local-basemap-urls": {
   "ignplan_local": "http://localhost:8080/ignplan_local/{z}/{x}/{y}.png"
 },
