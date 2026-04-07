@@ -1998,7 +1998,7 @@
         </div>
         <div class="form-row" style="margin-top:6px">
           <div class="form-group" style="flex:1">
-            <label>Historique max</label>
+            <label>Historique max (local)</label>
             <select id="aprsTimerange">
               <option value="1800">30 min</option>
               <option value="3600" selected>1 heure</option>
@@ -2008,6 +2008,9 @@
               <option value="0">Illimité</option>
             </select>
           </div>
+        </div>
+        <div style="margin-top:4px;font-size:11px;color:var(--muted)">
+          L'API APRS.fi utilisée ici retourne la dernière position (<code>what=loc</code>). Le tracé se construit à chaque rafraîchissement.
         </div>
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-primary" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
@@ -6151,49 +6154,17 @@ async function aprsQueryOne(apiKey, base, timerangeParam) {
   }
 }
 
-async function aprsQueryTrackOne(apiKey, call, timerangeParam) {
-  const url = `https://api.aprs.fi/api/get?name=${encodeURIComponent(call)}&what=track&apikey=${apiKey}&format=json${timerangeParam}&_t=${Date.now()}`;
-  try {
-    const resp = await fetch(url, {
-      signal: AbortSignal.timeout(15000),
-      cache: 'no-store',
-      headers: { 'Cache-Control': 'no-cache' }
-    });
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    if (data?.result && data.result !== 'ok') return [];
-    return Array.isArray(data.entries) ? data.entries : [];
-  } catch(e) {
-    try {
-      const resp = await fetchWithCorsProxy(url);
-      if (!resp.ok) return [];
-      const data = await resp.json();
-      if (data?.result && data.result !== 'ok') return [];
-      return Array.isArray(data.entries) ? data.entries : [];
-    } catch(e2) { return []; }
+function pruneAprsHistory(call) {
+  const timerange = parseInt(document.getElementById('aprsTimerange')?.value || 3600);
+  if (!aprsHistory[call]) return;
+
+  let points = aprsHistory[call];
+  if (timerange > 0) {
+    const minTs = Math.floor(Date.now() / 1000) - timerange;
+    points = points.filter(p => (parseInt(p.time || 0) >= minTs));
   }
-}
-
-function mergeAprsTrackInHistory(call, trackEntries) {
-  if (!Array.isArray(trackEntries) || trackEntries.length === 0) return;
-  if (!aprsHistory[call]) aprsHistory[call] = [];
-
-  const current = aprsHistory[call];
-  const keySet = new Set(current.map(p => `${p.time}|${p.lat}|${p.lon}`));
-  for (const e of trackEntries) {
-    const lat = parseFloat(e.lat);
-    const lon = parseFloat(e.lng);
-    const t = parseInt(e.time || e.lasttime || e.postime || 0);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon) || t <= 0) continue;
-    const k = `${t}|${lat}|${lon}`;
-    if (!keySet.has(k)) {
-      current.push({ lat, lon, time: t });
-      keySet.add(k);
-    }
-  }
-
-  current.sort((a, b) => a.time - b.time);
-  if (current.length > 500) aprsHistory[call] = current.slice(-500);
+  if (points.length > 500) points = points.slice(-500);
+  aprsHistory[call] = points;
 }
 
 async function doAprsQuery(apiKey, callsigns) {
@@ -6251,14 +6222,7 @@ async function doAprsQuery(apiKey, callsigns) {
       return;
     }
     found.forEach(entry => processAprsEntry(entry, now));
-
-    const showTrails = document.getElementById('aprsShowTrail')?.value === '1';
-    if (showTrails) {
-      const uniqueCalls = [...new Set(found.map(e => String(e.name || '')).filter(Boolean))];
-      const trackResults = await Promise.all(uniqueCalls.map(c => aprsQueryTrackOne(apiKey, c, timerangeParam)));
-      uniqueCalls.forEach((c, i) => mergeAprsTrackInHistory(c, trackResults[i]));
-      applyAprsTrailVisibility();
-    }
+    applyAprsTrailVisibility();
 
     renderAprsStations(found, notFound);
 
@@ -6322,7 +6286,7 @@ function processAprsEntry(entry, now) {
   const _lt = parseInt(entry.lasttime||0);
   const _pt = parseInt(entry.postime||0);
   const _t  = parseInt(entry.time||0);
-  const time = _lt > 0 ? _lt : (_pt > 0 ? _pt : _t);
+  const time = _pt > 0 ? _pt : (_lt > 0 ? _lt : _t);
   const old     = aprsIsOld(time);
   const speed   = entry.speed   ? entry.speed   + ' km/h' : '—';
   const course  = entry.course  ? entry.course  + '°'     : '—';
@@ -6333,8 +6297,8 @@ function processAprsEntry(entry, now) {
   const last = aprsHistory[call].slice(-1)[0];
   if (!last || last.lat !== lat || last.lon !== lon) {
     aprsHistory[call].push({ lat, lon, time });
-    if (aprsHistory[call].length > 50) aprsHistory[call].shift();
   }
+  pruneAprsHistory(call);
 
   applyAprsTrailVisibility(call);
 
