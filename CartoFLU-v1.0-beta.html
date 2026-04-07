@@ -1990,7 +1990,7 @@
           </div>
           <div class="form-group">
             <label>Afficher tracé</label>
-            <select id="aprsShowTrail">
+            <select id="aprsShowTrail" onchange="applyAprsTrailVisibility()">
               <option value="0">Non</option>
               <option value="1" selected>Oui</option>
             </select>
@@ -6282,15 +6282,7 @@ function processAprsEntry(entry, now) {
     if (aprsHistory[call].length > 50) aprsHistory[call].shift();
   }
 
-  if (document.getElementById('aprsShowTrail').value === '1' && aprsHistory[call].length > 1) {
-    const pts = aprsHistory[call].map(p => [p.lat, p.lon]);
-    if (aprsTrails[call]) aprsTrails[call].setLatLngs(pts);
-    else {
-      aprsTrails[call] = L.polyline(pts, {
-        color: '#ff0000', weight: 6, opacity: 0.8, dashArray: '16,16'
-      }).addTo(map);
-    }
-  }
+  applyAprsTrailVisibility(call);
 
   const labelColor = old ? 'var(--muted)' : 'var(--accent2)';
   // entry.symbol contient les 2 chars : ex "/>" (voiture), "\#" (digipeater)
@@ -6397,6 +6389,30 @@ function aprsCenter(call) {
   if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 11)); m.openPopup(); }
 }
 
+function applyAprsTrailVisibility(call = null) {
+  const showTrails = document.getElementById('aprsShowTrail')?.value === '1';
+  const calls = call ? [call] : Object.keys(aprsHistory);
+
+  calls.forEach(cs => {
+    const history = aprsHistory[cs] || [];
+    const hasTrail = history.length > 1;
+    const isHidden = aprsHidden.has(cs);
+
+    if (!showTrails || !hasTrail || isHidden) {
+      if (aprsTrails[cs]) { aprsTrails[cs].remove(); delete aprsTrails[cs]; }
+      return;
+    }
+
+    const pts = history.map(p => [p.lat, p.lon]);
+    if (aprsTrails[cs]) aprsTrails[cs].setLatLngs(pts);
+    else {
+      aprsTrails[cs] = L.polyline(pts, {
+        color: '#ff0000', weight: 6, opacity: 0.8, dashArray: '16,16'
+      }).addTo(map);
+    }
+  });
+}
+
 function aprsUseAsStation(call, lat, lon) {
   // Pré-remplir le formulaire de relevé avec la position APRS
   // On affiche uniquement l'indicatif de base sans le suffixe -x
@@ -6419,12 +6435,12 @@ function aprsToggleHide(call) {
     aprsHidden.delete(call);
     // Réaffiche le marqueur et la trace
     if (aprsMarkers[call]) aprsMarkers[call].addTo(map);
-    if (aprsTrails[call])  aprsTrails[call].addTo(map);
+    applyAprsTrailVisibility(call);
   } else {
     aprsHidden.add(call);
     // Cache le marqueur et la trace
     if (aprsMarkers[call]) aprsMarkers[call].remove();
-    if (aprsTrails[call])  aprsTrails[call].remove();
+    if (aprsTrails[call])  { aprsTrails[call].remove(); delete aprsTrails[call]; }
     map.closePopup();
   }
   // Rafraîchit la liste pour griser/dégriser
