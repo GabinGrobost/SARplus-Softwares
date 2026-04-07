@@ -2065,7 +2065,6 @@
           <option value="topo">Topo</option>
           <option value="ignortho">Orthophotos</option>
           <option value="ignscan25">IGN SCAN 25</option>
-          <option value="local">📴 Local (hors ligne)</option>
         </select>
       </div>
     </div>
@@ -2391,12 +2390,40 @@ const BASEMAPS = {
     attribution: '© Esri, Maxar, Earthstar Geographics',
     maxZoom: 19
   },
-  local: {
-    label: '📴 Local (hors ligne)',
+  ignplan_local: {
+    label: 'IGN Plan IGN v2 (local)',
     url: 'http://localhost:8080/{z}/{x}/{y}.png',
     attribution: '© OpenStreetMap — tuiles locales',
     minZoom: 6,
     maxZoom: 15
+  },
+  ignortho_local: {
+    label: 'IGN Orthophotos (local)',
+    url: 'http://localhost:8081/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap — tuiles locales',
+    minZoom: 6,
+    maxZoom: 19
+  },
+  topo_local: {
+    label: 'OpenTopoMap (local)',
+    url: 'http://localhost:8082/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap — tuiles locales',
+    minZoom: 6,
+    maxZoom: 17
+  },
+  osmorg_local: {
+    label: 'OSM.org (local)',
+    url: 'http://localhost:8083/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap — tuiles locales',
+    minZoom: 6,
+    maxZoom: 19
+  },
+  ignscan25_local: {
+    label: 'IGN SCAN 25 (local)',
+    url: 'http://localhost:8084/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap — tuiles locales',
+    minZoom: 6,
+    maxZoom: 19
   }
 };
 
@@ -2426,7 +2453,11 @@ function promptIgnScan25ApiKey(force = false) {
 }
 
 function resolveBasemap(key, opts = {}) {
-  const bm = BASEMAPS[key] || BASEMAPS.osm;
+  const bmRaw = BASEMAPS[key] || BASEMAPS.osm;
+  const localUrlFromConfig = runtimeConfig.localBasemaps?.[key];
+  const bm = (key.endsWith('_local') && typeof localUrlFromConfig === 'string' && localUrlFromConfig.trim())
+    ? { ...bmRaw, url: localUrlFromConfig.trim() }
+    : bmRaw;
 
   if (key === 'ignscan25') {
     const apiKey = promptIgnScan25ApiKey(!!opts.forcePrompt);
@@ -2469,15 +2500,28 @@ function createBasemapLayer(bm, key = '') {
 
 let currentTileLayer = createBasemapLayer(resolveBasemap('osm') || BASEMAPS.osm, 'osm').addTo(map);
 
+function shouldUseOfflineBasemap() {
+  if (runtimeConfig.forceOffline) return true;
+  if (internetAccessState.checked) return !internetAccessState.online;
+  return navigator.onLine === false;
+}
+
+function getEffectiveBasemapKey(selectedKey) {
+  if (!shouldUseOfflineBasemap()) return selectedKey;
+  const localKey = `${selectedKey}_local`;
+  return BASEMAPS[localKey] ? localKey : selectedKey;
+}
+
 function changeBasemap(key) {
-  const resolved = resolveBasemap(key);
+  const effectiveKey = getEffectiveBasemapKey(key);
+  const resolved = resolveBasemap(effectiveKey);
   if (!resolved) {
     document.getElementById('basemapSelect').value = currentBasemapKey;
     return;
   }
 
   if (currentTileLayer) map.removeLayer(currentTileLayer);
-  currentTileLayer = createBasemapLayer(resolved, key).addTo(map);
+  currentTileLayer = createBasemapLayer(resolved, effectiveKey).addTo(map);
   currentBasemapKey = key in BASEMAPS ? key : 'osm';
   if (currentTileLayer.bringToBack) currentTileLayer.bringToBack();
 }
@@ -2578,10 +2622,12 @@ let idCounter = 0;
 let maintenanceMode = false;
 const runtimeConfig = {
   entityName: 'ADRASEC 25',
+  departmentCode: '25',
   aprsApiKey: '',
   forceOffline: false,
   maintenance: false,
-  softwareVersion: '1.0'
+  softwareVersion: '1.0',
+  localBasemaps: {}
 };
 
 function applyRuntimeConfig() {
@@ -2610,10 +2656,14 @@ async function loadRuntimeConfig() {
     if (!resp.ok) return;
     const cfg = await resp.json();
     runtimeConfig.entityName = String(cfg['entity-name'] ?? cfg.entityName ?? runtimeConfig.entityName);
+    runtimeConfig.departmentCode = String(cfg['department-code'] ?? cfg.departmentCode ?? runtimeConfig.departmentCode);
     runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
     runtimeConfig.forceOffline = !!(cfg['force-offline'] ?? cfg.forceOffline ?? runtimeConfig.forceOffline);
     runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
     runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
+    runtimeConfig.localBasemaps = (cfg['local-basemaps'] && typeof cfg['local-basemaps'] === 'object')
+      ? cfg['local-basemaps']
+      : {};
   } catch (e) {
     console.warn('[CartoFLU] config.json non chargé :', e);
   }
@@ -2622,6 +2672,7 @@ async function loadRuntimeConfig() {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadRuntimeConfig();
   applyRuntimeConfig();
+  ensureInitialInternetCheck().finally(() => changeBasemap(currentBasemapKey));
   updateSidebarToggleButton();
   updateStationList();
   updateOperationControls();
@@ -2927,6 +2978,12 @@ map.on('click', e => {
 
 let sarOperationMode = 'connected';
 let sarOperationCheckInFlight = false;
+let initialInternetCheckInFlight = null;
+const internetAccessState = {
+  checked: false,
+  online: true,
+  checkedAt: null
+};
 let currentSarOperation = null;
 let lastSarOperationMeta = null;
 const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
@@ -3206,6 +3263,26 @@ async function hasInternetAccess() {
   return false;
 }
 
+function setInternetAccessState(online) {
+  internetAccessState.checked = true;
+  internetAccessState.online = !!online;
+  internetAccessState.checkedAt = Date.now();
+}
+
+function ensureInitialInternetCheck() {
+  if (initialInternetCheckInFlight) return initialInternetCheckInFlight;
+  initialInternetCheckInFlight = hasInternetAccess()
+    .then(online => {
+      setInternetAccessState(online);
+      return online;
+    })
+    .catch(() => {
+      setInternetAccessState(false);
+      return false;
+    });
+  return initialInternetCheckInFlight;
+}
+
 function resetSarOperationForm() {
   const name = document.getElementById('sarOperationName');
   const ref = document.getElementById('sarOperationRef');
@@ -3226,7 +3303,7 @@ function buildDefaultOperationRef() {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
   const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = '25';
+  const dd = String(runtimeConfig.departmentCode || '25').padStart(2, '0').slice(-2);
   const seq = '0001';
   return `${yy}${mm}${dd}${seq}`;
 }
@@ -3351,7 +3428,9 @@ async function openOperation() {
   closeSarOperationOverlay();
   closeSarOfflineModal();
   try {
-    const online = await hasInternetAccess();
+    const online = internetAccessState.checked
+      ? internetAccessState.online
+      : await ensureInitialInternetCheck();
     if (online) {
       notify('Accès internet détecté ✓');
       openSarOperationOverlay('connected');

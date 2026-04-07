@@ -1,7 +1,15 @@
 {
   "entity-name": "ADRASEC 25",
+  "department-code": "25",
   "aprsfi-api-key": "",
   "force-offline": false,
   "maintenance": false,
-  "software-version": "1.0"
+  "software-version": "1.0",
+  "local-basemaps": {
+    "osmorg_local": "http://localhost:8083/{z}/{x}/{y}.png",
+    "ignplan_local": "http://localhost:8080/{z}/{x}/{y}.png",
+    "topo_local": "http://localhost:8082/{z}/{x}/{y}.png",
+    "ignortho_local": "http://localhost:8081/{z}/{x}/{y}.png",
+    "ignscan25_local": "http://localhost:8084/{z}/{x}/{y}.png"
+  }
 }
