@@ -6151,6 +6151,51 @@ async function aprsQueryOne(apiKey, base, timerangeParam) {
   }
 }
 
+async function aprsQueryTrackOne(apiKey, call, timerangeParam) {
+  const url = `https://api.aprs.fi/api/get?name=${encodeURIComponent(call)}&what=track&apikey=${apiKey}&format=json${timerangeParam}&_t=${Date.now()}`;
+  try {
+    const resp = await fetch(url, {
+      signal: AbortSignal.timeout(15000),
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' }
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    if (data?.result && data.result !== 'ok') return [];
+    return Array.isArray(data.entries) ? data.entries : [];
+  } catch(e) {
+    try {
+      const resp = await fetchWithCorsProxy(url);
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      if (data?.result && data.result !== 'ok') return [];
+      return Array.isArray(data.entries) ? data.entries : [];
+    } catch(e2) { return []; }
+  }
+}
+
+function mergeAprsTrackInHistory(call, trackEntries) {
+  if (!Array.isArray(trackEntries) || trackEntries.length === 0) return;
+  if (!aprsHistory[call]) aprsHistory[call] = [];
+
+  const current = aprsHistory[call];
+  const keySet = new Set(current.map(p => `${p.time}|${p.lat}|${p.lon}`));
+  for (const e of trackEntries) {
+    const lat = parseFloat(e.lat);
+    const lon = parseFloat(e.lng);
+    const t = parseInt(e.time || e.lasttime || e.postime || 0);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || t <= 0) continue;
+    const k = `${t}|${lat}|${lon}`;
+    if (!keySet.has(k)) {
+      current.push({ lat, lon, time: t });
+      keySet.add(k);
+    }
+  }
+
+  current.sort((a, b) => a.time - b.time);
+  if (current.length > 500) aprsHistory[call] = current.slice(-500);
+}
+
 async function doAprsQuery(apiKey, callsigns) {
   const statusEl = document.getElementById('aprsStatus');
   statusEl.innerHTML = `<span class="spinner"></span> Interrogation APRS.fi… (${callsigns.join(', ')})`;
@@ -6206,6 +6251,15 @@ async function doAprsQuery(apiKey, callsigns) {
       return;
     }
     found.forEach(entry => processAprsEntry(entry, now));
+
+    const showTrails = document.getElementById('aprsShowTrail')?.value === '1';
+    if (showTrails) {
+      const uniqueCalls = [...new Set(found.map(e => String(e.name || '')).filter(Boolean))];
+      const trackResults = await Promise.all(uniqueCalls.map(c => aprsQueryTrackOne(apiKey, c, timerangeParam)));
+      uniqueCalls.forEach((c, i) => mergeAprsTrackInHistory(c, trackResults[i]));
+      applyAprsTrailVisibility();
+    }
+
     renderAprsStations(found, notFound);
 
     const ts = new Date().toLocaleTimeString('fr-FR');
