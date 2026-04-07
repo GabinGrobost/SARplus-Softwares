@@ -2062,8 +2062,12 @@
         <select id="basemapSelect" onchange="changeBasemap(this.value)">
           <option value="osmorg">OSM</option>
           <option value="ignplan">IGN</option>
+          <option value="ignmaps">IGN Cartes</option>
           <option value="topo">Topo</option>
           <option value="ignortho">Orthophotos</option>
+          <option value="ignscan100">IGN SCAN 100</option>
+          <option value="ignscanoaci">IGN SCAN OACI</option>
+          <option value="ignscan25tour">IGN SCAN 25 Tour</option>
           <option value="ignscan25">IGN SCAN 25</option>
         </select>
       </div>
@@ -2370,6 +2374,58 @@ const BASEMAPS = {
     attribution: '© IGN - Géoplateforme',
     maxZoom: 19
   },
+  ignmaps: {
+    label: 'IGN Cartes',
+    type: 'wms',
+    url: 'https://data.geopf.fr/wms-r/wms',
+    options: {
+      layers: 'GEOGRAPHICALGRIDSYSTEMS.MAPS',
+      format: 'image/png',
+      transparent: false,
+      version: '1.3.0'
+    },
+    attribution: '© IGN - Géoplateforme',
+    maxZoom: 19
+  },
+  ignscan100: {
+    label: 'IGN SCAN 100',
+    type: 'wms',
+    url: 'https://data.geopf.fr/wms-r/wms',
+    options: {
+      layers: 'SCAN100_PYR-JPEG_WLD_WM',
+      format: 'image/jpeg',
+      transparent: false,
+      version: '1.3.0'
+    },
+    attribution: '© IGN - Géoplateforme',
+    maxZoom: 19
+  },
+  ignscanoaci: {
+    label: 'IGN SCAN OACI',
+    type: 'wms',
+    url: 'https://data.geopf.fr/wms-r/wms',
+    options: {
+      layers: 'SCANOACI_PYR-JPEG_WLD_WM',
+      format: 'image/jpeg',
+      transparent: false,
+      version: '1.3.0'
+    },
+    attribution: '© IGN - Géoplateforme',
+    maxZoom: 19
+  },
+  ignscan25tour: {
+    label: 'IGN SCAN 25 Tour',
+    type: 'wms',
+    url: 'https://data.geopf.fr/wms-r/wms',
+    options: {
+      layers: 'SCAN25TOUR_PYR-JPEG_WLD_WM',
+      format: 'image/jpeg',
+      transparent: false,
+      version: '1.3.0'
+    },
+    attribution: '© IGN - Géoplateforme',
+    maxZoom: 19
+  },
   ignscan25: {
     label: 'IGN SCAN 25',
     type: 'wms',
@@ -2503,6 +2559,18 @@ function getOnlineSeedUrlTemplate(key) {
   }
   if (key === 'ignortho') {
     return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
+  }
+  if (key === 'ignmaps') {
+    return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.MAPS&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
+  }
+  if (key === 'ignscan100') {
+    return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=SCAN100_PYR-JPEG_WLD_WM_WMTS_3D&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
+  }
+  if (key === 'ignscanoaci') {
+    return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN-OACI&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
+  }
+  if (key === 'ignscan25tour') {
+    return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN25TOUR&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
   }
   const bm = BASEMAPS[key];
   if (!bm?.url || bm.type === 'wms' || bm.restricted) return null;
