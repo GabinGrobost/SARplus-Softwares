@@ -3554,6 +3554,7 @@ function updateStationList() {
   else updateColorPickerAvailability(finalValue || 'STATION');
 
   if (aprsTimer) refreshAprsTrackingFromRollcall();
+  else if (aprsAutoStartRequested) tryAutoStartAprs();
   scheduleOpActiveSync('rollcall-updated');
 }
 
@@ -5982,6 +5983,7 @@ let aprsTrails  = {};       // callsign → L.polyline
 let aprsHistory = {};       // callsign → [{lat,lon,time}]
 const aprsHidden = new Set(); // callsigns masqués
 let aprsTimer   = null;
+let aprsAutoStartRequested = true;
 const CORS_PROXIES = [
   'https://corsproxy.io/?',
   'https://api.allorigins.win/raw?url=',
@@ -6003,18 +6005,34 @@ async function fetchWithCorsProxy(url) {
 
 let _aprsKeySaveTimer = null;
 
+async function persistAprsKeyToConfig(key) {
+  const resp = await fetch('save-config.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'aprsfi-api-key': key }),
+    keepalive: true
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+}
+
 function onAprsApiKeyInput() {
   if (_aprsKeySaveTimer) clearTimeout(_aprsKeySaveTimer);
-  _aprsKeySaveTimer = setTimeout(() => {
+  _aprsKeySaveTimer = setTimeout(async () => {
     const key = document.getElementById('aprsApiKey')?.value.trim() || '';
     const status = document.getElementById('aprsKeyStatus');
     if (!key) {
       localStorage.removeItem('cartoflu_aprs_key');
+      try { await persistAprsKeyToConfig(''); } catch(e) { /* ignore */ }
       if (status) status.innerHTML = '<span style="color:var(--muted)">Clé vide</span>';
       return;
     }
     localStorage.setItem('cartoflu_aprs_key', key);
-    if (status) status.innerHTML = '<span style="color:var(--green)">✓ Sauvegarde auto</span>';
+    try {
+      await persistAprsKeyToConfig(key);
+      if (status) status.innerHTML = '<span style="color:var(--green)">✓ Sauvegarde auto (navigateur + config.json)</span>';
+    } catch (e) {
+      if (status) status.innerHTML = '<span style="color:var(--accent2)">⚠ Sauvegardée navigateur uniquement</span>';
+    }
   }, 250);
 }
 
@@ -6023,6 +6041,14 @@ function loadAprsKey() {
   if (k && !document.getElementById('aprsApiKey')?.value) document.getElementById('aprsApiKey').value = k;
   const status = document.getElementById('aprsKeyStatus');
   if (status) status.innerHTML = k ? '<span style="color:var(--green)">✓ Chargée</span>' : '<span style="color:var(--muted)">Sauvegarde automatique</span>';
+}
+
+async function tryAutoStartAprs() {
+  if (!aprsAutoStartRequested || aprsTimer) return;
+  const apiKey = document.getElementById('aprsApiKey')?.value.trim();
+  const callsigns = getAprsTrackedBaseCallsigns();
+  if (!apiKey || !callsigns.length) return;
+  await fetchAprs();
 }
 
 function aprsAgeStr(unixTime) {
@@ -6422,6 +6448,7 @@ function clearAprsMarkers() {
 // Charger la clé sauvegardée au démarrage
 window.addEventListener('load', () => {
   loadAprsKey();
+  setTimeout(() => { tryAutoStartAprs(); }, 400);
   const bannerAppel = document.createElement('div');
   bannerAppel.id = 'welcomeBannerAppel';
   bannerAppel.style.cssText = `
