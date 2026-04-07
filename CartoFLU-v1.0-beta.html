@@ -1998,7 +1998,7 @@
         </div>
         <div class="form-row" style="margin-top:6px">
           <div class="form-group" style="flex:1">
-            <label>Historique max</label>
+            <label>Historique max (local)</label>
             <select id="aprsTimerange">
               <option value="1800">30 min</option>
               <option value="3600" selected>1 heure</option>
@@ -2008,6 +2008,9 @@
               <option value="0">Illimité</option>
             </select>
           </div>
+        </div>
+        <div style="margin-top:4px;font-size:11px;color:var(--muted)">
+          L'API APRS.fi utilisée ici retourne la dernière position (<code>what=loc</code>). Le tracé se construit à chaque rafraîchissement.
         </div>
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-primary" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
@@ -6151,6 +6154,19 @@ async function aprsQueryOne(apiKey, base, timerangeParam) {
   }
 }
 
+function pruneAprsHistory(call) {
+  const timerange = parseInt(document.getElementById('aprsTimerange')?.value || 3600);
+  if (!aprsHistory[call]) return;
+
+  let points = aprsHistory[call];
+  if (timerange > 0) {
+    const minTs = Math.floor(Date.now() / 1000) - timerange;
+    points = points.filter(p => (parseInt(p.time || 0) >= minTs));
+  }
+  if (points.length > 500) points = points.slice(-500);
+  aprsHistory[call] = points;
+}
+
 async function doAprsQuery(apiKey, callsigns) {
   const statusEl = document.getElementById('aprsStatus');
   statusEl.innerHTML = `<span class="spinner"></span> Interrogation APRS.fi… (${callsigns.join(', ')})`;
@@ -6206,6 +6222,8 @@ async function doAprsQuery(apiKey, callsigns) {
       return;
     }
     found.forEach(entry => processAprsEntry(entry, now));
+    applyAprsTrailVisibility();
+
     renderAprsStations(found, notFound);
 
     const ts = new Date().toLocaleTimeString('fr-FR');
@@ -6268,7 +6286,7 @@ function processAprsEntry(entry, now) {
   const _lt = parseInt(entry.lasttime||0);
   const _pt = parseInt(entry.postime||0);
   const _t  = parseInt(entry.time||0);
-  const time = _lt > 0 ? _lt : (_pt > 0 ? _pt : _t);
+  const time = _pt > 0 ? _pt : (_lt > 0 ? _lt : _t);
   const old     = aprsIsOld(time);
   const speed   = entry.speed   ? entry.speed   + ' km/h' : '—';
   const course  = entry.course  ? entry.course  + '°'     : '—';
@@ -6279,8 +6297,8 @@ function processAprsEntry(entry, now) {
   const last = aprsHistory[call].slice(-1)[0];
   if (!last || last.lat !== lat || last.lon !== lon) {
     aprsHistory[call].push({ lat, lon, time });
-    if (aprsHistory[call].length > 50) aprsHistory[call].shift();
   }
+  pruneAprsHistory(call);
 
   applyAprsTrailVisibility(call);
 
