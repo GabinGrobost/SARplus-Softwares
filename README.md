@@ -1,16 +1,15 @@
 # SAR+ based on CartoFLU 🦊📡
 
 **Application web de radiogoniométrie pour la recherche de balise**  
-Développée par F4FLU / Christophe Chalandre /· ADRASEC 25 (Doubs) (CartoFLU Creator)
 Développée par SWL2506 / Gabin Grobost / ADRASEC 25 (Doubs) (SAR+ Developper)
 
 ---
 
 ## Présentation
 
-CartoFLU est une application **HTML autonome** (un seul fichier) permettant de gérer une opération de radiogoniométrie en temps réel. Elle a été conçue pour les exercices et interventions de recherche de balise de détresse organisés par les ADRASEC.
+SAR+ est une application **Autonome** permettant de gérer une opération de radiogoniométrie en temps réel. Elle a été conçue pour les exercices et interventions de recherche de balise de détresse organisés par les ADRASEC.
 
-Elle fonctionne directement dans le navigateur, sans installation, sans serveur back-end. Une simple connexion internet suffit pour charger les tuiles cartographiques (mode hors-ligne également disponible).
+Elle fonctionne via une SAR BOX, avec un serveur back-end facultatif. Une simple connexion internet suffit pour charger les tuiles cartographiques (mode hors-ligne également disponible).
 
 ---
 
@@ -75,21 +74,6 @@ Pour une utilisation sans internet (terrain, exercice isolé) :
 2. Lancer `serveur_tuiles.bat` (à placer à la racine du dossier des tuiles) — démarre un serveur Python sur `localhost:8080`
 3. Dans CartoFLU, sélectionner le fond de carte **"📴 Local (hors ligne)"**
 
-### Fichier callsign_list.txt
-
-Fichier texte simple, un indicatif par ligne :
-
-```
-F4FLU
-F4XYZ
-F5ABC
-...
-```
-
-Un exemple de fichier est fourni dans le dépôt (`callsign_list.example.txt`).
-
----
-
 ## Structure du dépôt
 
 ```
@@ -150,8 +134,8 @@ Voir le fichier `LICENSE` ou [gnu.org/licenses/gpl-3.0](https://www.gnu.org/lice
 
 ## Contact
 
-**F4FLU** — ADRASEC 25 (Doubs, Bourgogne-Franche-Comté)  
-📧 f4flu@free.fr
+**SWL2506** — ADRASEC 25 (Doubs, Bourgogne-Franche-Comté)  
+📧 
 
 ---
 
