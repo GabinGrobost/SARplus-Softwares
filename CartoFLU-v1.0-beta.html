@@ -2190,6 +2190,10 @@
               <input type="text" id="sarOperationName" placeholder="ex : SAR Montfaucon - secteur Est" />
             </div>
             <div class="form-group">
+              <label for="sarOperationRef">REF opération</label>
+              <input type="text" id="sarOperationRef" placeholder="AAMMDDXXXX (ex : 2604250001)" maxlength="10" />
+            </div>
+            <div class="form-group">
               <label for="sarOperationType">Type d'opération</label>
               <select id="sarOperationType">
                 <option value="">Sélectionner…</option>
@@ -2588,12 +2592,13 @@ const DEFAULT_STATION_COLOR = '#808080';
 let sidebarVisible = false;
 let idCounter = 0;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   updateSidebarToggleButton();
   updateStationList();
   updateOperationControls();
   onCallsignInput(document.getElementById('callsign')?.value || '');
-  loadMemberListFromUrl();
+  await loadMemberListFromUrl();
+  await hydrateActiveOperationFromServer();
 });
 
 function normalizeCallsign(raw) {
@@ -2894,9 +2899,171 @@ map.on('click', e => {
 let sarOperationMode = 'connected';
 let sarOperationCheckInFlight = false;
 let currentSarOperation = null;
+let lastSarOperationMeta = null;
+const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
+let _opActiveSyncTimer = null;
+let _opActiveSyncInFlight = false;
+let _opActiveLastPayload = '';
 
 function hasActiveOperation() {
   return !!currentSarOperation;
+}
+
+function getSarOperationFormSnapshot() {
+  const name = document.getElementById('sarOperationName')?.value.trim() || '';
+  const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
+  const type = document.getElementById('sarOperationType')?.value || '';
+  const exercise = document.getElementById('sarExercise')?.value || 'non';
+  const sizing = document.getElementById('sarSizing')?.value.trim() || '';
+  const hasAnyValue = !!(name || ref || type || sizing);
+  return { hasAnyValue, name, ref, type, exercise, sizing };
+}
+
+function getRollcallStationsSnapshot() {
+  const stations = Array.from(
+    document.querySelectorAll('.rollcall-station input[type="checkbox"]')
+  ).map(cb => {
+    const callsign = (cb.value || '').toUpperCase();
+    return {
+      callsign,
+      present: !!cb.checked,
+      lastSeenAt: lastSeen[callsign] ? new Date(lastSeen[callsign]).toISOString() : null
+    };
+  }).filter(st => !!st.callsign);
+
+  const presentCallsigns = stations
+    .filter(st => st.present)
+    .map(st => st.callsign)
+    .sort();
+
+  return {
+    totalStations: stations.length,
+    presentCount: presentCallsigns.length,
+    presentCallsigns,
+    stations
+  };
+}
+
+function getBaliseSnapshot() {
+  if (!balisMarker) return null;
+  const p = balisMarker.getLatLng();
+  return { lat: p.lat, lon: p.lng };
+}
+
+function buildOpActivePayload(source = 'ui') {
+  const operationForm = getSarOperationFormSnapshot();
+  const { hasAnyValue, ...operationFormData } = operationForm;
+  const operation = currentSarOperation
+    ? { ...currentSarOperation }
+    : (hasAnyValue
+      ? { ...operationFormData, draft: true }
+      : (lastSarOperationMeta ? { ...lastSarOperationMeta } : null));
+
+  return {
+    version: 1,
+    kind: 'op-active',
+    app: 'CartoFLU',
+    active: hasActiveOperation(),
+    updatedAt: new Date().toISOString(),
+    operation,
+    operationForm: {
+      name: operationFormData.name,
+      ref: operationFormData.ref,
+      type: operationFormData.type,
+      exercise: operationFormData.exercise,
+      sizing: operationFormData.sizing
+    },
+    rollcall: getRollcallStationsSnapshot(),
+    session: {
+      bearings: bearings.map(b => ({ ...b })),
+      negListenings: negListenings.map(n => ({ ...n })),
+      balise: getBaliseSnapshot(),
+      intersection: intersectionState ? { ...intersectionState } : null
+    },
+    sync: {
+      source,
+      path: location.pathname || '/'
+    }
+  };
+}
+
+async function flushOpActiveSync(source = 'ui') {
+  if (_opActiveSyncInFlight) return;
+  const payload = buildOpActivePayload(source);
+  const payloadText = JSON.stringify(payload);
+  if (payloadText === _opActiveLastPayload) return;
+  _opActiveSyncInFlight = true;
+  try {
+    const resp = await fetch(OP_ACTIVE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payloadText,
+      keepalive: true
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    _opActiveLastPayload = payloadText;
+  } catch (e) {
+    console.warn('[CartoFLU] Sync op-active.json impossible :', e);
+  } finally {
+    _opActiveSyncInFlight = false;
+  }
+}
+
+function scheduleOpActiveSync(source = 'ui') {
+  if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
+  _opActiveSyncTimer = setTimeout(() => {
+    _opActiveSyncTimer = null;
+    flushOpActiveSync(source);
+  }, 200);
+}
+
+window.addEventListener('beforeunload', () => {
+  if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
+  flushOpActiveSync('beforeunload');
+});
+
+function restoreRollcallFromOpActive(stations = []) {
+  if (!Array.isArray(stations)) return;
+  stations.forEach(entry => {
+    const cs = normalizeCallsign(entry?.callsign || '');
+    if (!cs) return;
+    rollcallEnsureUnchecked(cs);
+    const cb = document.getElementById('rc-' + cs);
+    if (!cb) return;
+    cb.checked = !!entry.present;
+    if (entry.lastSeenAt) {
+      const t = Date.parse(entry.lastSeenAt);
+      if (!Number.isNaN(t)) lastSeen[cs] = t;
+    }
+  });
+}
+
+async function hydrateActiveOperationFromServer() {
+  try {
+    const resp = await fetch('op-active.json', { cache: 'no-store' });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    if (!data?.active || !data?.operation) return false;
+
+    currentSarOperation = { ...data.operation };
+    lastSarOperationMeta = { ...data.operation };
+    updateOperationControls();
+
+    const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
+    const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
+    if (savedBearings.length || savedNegListenings.length) {
+      restoreBearings(savedBearings, savedNegListenings);
+    }
+
+    restoreRollcallFromOpActive(data?.rollcall?.stations || []);
+    updateStationList();
+    notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis op-active.json ✓`);
+    scheduleOpActiveSync('operation-restored');
+    return true;
+  } catch (e) {
+    console.warn('[CartoFLU] Restauration op-active.json impossible :', e);
+    return false;
+  }
 }
 
 function setElementDisplay(element, visible, displayValue = 'inline-flex') {
@@ -2978,16 +3145,27 @@ async function hasInternetAccess() {
 
 function resetSarOperationForm() {
   const name = document.getElementById('sarOperationName');
+  const ref = document.getElementById('sarOperationRef');
   const type = document.getElementById('sarOperationType');
   const sizing = document.getElementById('sarSizing');
   const exercise = document.getElementById('sarExercise');
   if (name) name.value = '';
+  if (ref) ref.value = buildDefaultOperationRef();
   if (type) type.value = '';
   if (sizing) sizing.value = '';
   if (exercise) exercise.value = 'non';
   document.querySelectorAll('#sarExerciseToggle .sar-toggle-btn').forEach((btn, index) => {
     btn.classList.toggle('active', index === 0);
   });
+}
+
+function buildDefaultOperationRef() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = '25';
+  const seq = '0001';
+  return `${yy}${mm}${dd}${seq}`;
 }
 
 function updateSarOperationModeUi(mode) {
@@ -3051,10 +3229,12 @@ function setSarToggleValue(fieldId, value, btn) {
   wrap.querySelectorAll('.sar-toggle-btn').forEach(node => {
     node.classList.toggle('active', node === btn);
   });
+  scheduleOpActiveSync('operation-form-updated');
 }
 
 function submitSarOperation() {
   const name = document.getElementById('sarOperationName')?.value.trim() || '';
+  const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
   const type = document.getElementById('sarOperationType')?.value || '';
   const exercise = document.getElementById('sarExercise')?.value || 'non';
   const sizing = document.getElementById('sarSizing')?.value.trim() || '';
@@ -3069,19 +3249,27 @@ function submitSarOperation() {
     document.getElementById('sarOperationType')?.focus();
     return;
   }
+  if (!/^\d{10}$/.test(ref)) {
+    notify('⚠ REF invalide (format attendu : AAMMDDXXXX, 10 chiffres)', true);
+    document.getElementById('sarOperationRef')?.focus();
+    return;
+  }
 
   currentSarOperation = {
     name,
+    ref,
     type,
     exercise,
     sizing,
     mode: sarOperationMode,
     createdAt: new Date().toISOString()
   };
+  lastSarOperationMeta = { ...currentSarOperation };
 
   closeSarOperationOverlay();
   updateOperationControls();
   notify(`📂 Opération ${name} ouverte en ${sarOperationMode === 'degraded' ? 'mode dégradé' : 'mode connecté'} ✓`);
+  scheduleOpActiveSync('operation-opened');
 }
 
 async function openOperation() {
@@ -3130,9 +3318,11 @@ function joinOperation() {
     joined: true,
     joinedAt: new Date().toISOString()
   };
+  lastSarOperationMeta = { ...currentSarOperation };
 
   updateOperationControls();
   notify(`🤝 Opération ${name} rejointe ✓`);
+  scheduleOpActiveSync('operation-joined');
 }
 
 function closeOperation() {
@@ -3142,6 +3332,11 @@ function closeOperation() {
   }
 
   const operationName = currentSarOperation?.name || 'sans nom';
+  lastSarOperationMeta = {
+    ...(currentSarOperation || {}),
+    active: false,
+    closedAt: new Date().toISOString()
+  };
   currentSarOperation = null;
   closeSarOperationOverlay();
   closeSarOfflineModal();
@@ -3149,6 +3344,7 @@ function closeOperation() {
   closeMapContextMenu();
   updateOperationControls();
   notify(`🗂 Opération ${operationName} cloturée ✓`);
+  scheduleOpActiveSync('operation-closed');
 }
 
 function customOperationAction() {
@@ -3317,6 +3513,7 @@ function updateStationList() {
   else updateColorPickerAvailability(finalValue || 'STATION');
 
   if (aprsTimer) refreshAprsTrackingFromRollcall();
+  scheduleOpActiveSync('rollcall-updated');
 }
 
 // Met à jour les indicateurs "dernier relevé" dans le dropdown
@@ -4388,6 +4585,7 @@ function addBearing() {
     onCallsignInput('');
     notify('✚ Balise (fox) placée sur la carte');
     writeSaveFile(true);
+    scheduleOpActiveSync('balise-updated');
     return;
   }
   if (document.getElementById('ecouteNegative').checked) {
@@ -4411,6 +4609,7 @@ function addBearing() {
     if (window._pickBlinkTimer) { clearInterval(window._pickBlinkTimer); window._pickBlinkTimer = null; }
     if (window._pickMarker) { window._pickMarker.remove(); window._pickMarker = null; }
     writeSaveFile(true);
+    scheduleOpActiveSync('neg-listening-added');
     return;
   }
 
@@ -4452,6 +4651,7 @@ function addBearing() {
   document.getElementById('bearing').value = '';
   clearBearingPreview();
   writeSaveFile(true);
+  scheduleOpActiveSync('bearing-added');
 }
 
 // ─── ÉCOUTE NÉGATIVE ──────────────────────────────────────────────────────────
@@ -5243,6 +5443,7 @@ function toggleBearingVisibility(id) {
   drawBearing(b);
   renderList();
   scheduleAutoIntersectionRefresh();
+  scheduleOpActiveSync('bearing-visibility-toggled');
 }
 
 function removeBearing(id) {
@@ -5262,6 +5463,7 @@ function removeBearing(id) {
   scheduleAutoIntersectionRefresh();
   notify(`Relevé #${id} supprimé`);
   writeSaveFile(true);
+  scheduleOpActiveSync('bearing-removed');
 }
 
 function clearAll() {
@@ -5273,6 +5475,7 @@ function clearAll() {
   clearIntersectionDisplay();
   renderList();
   notify('Tous les relevés effacés');
+  scheduleOpActiveSync('all-bearings-cleared');
 }
 
 // ─── MAP CONTROLS ─────────────────────────────────────────────────────────────
@@ -6393,6 +6596,21 @@ function exportCSV() {
 // Pré-remplir l'horodatage avec l'heure actuelle
 setNow();
 callsignColors['STATION'] = DEFAULT_STATION_COLOR;
+
+const sarOperationRefInput = document.getElementById('sarOperationRef');
+if (sarOperationRefInput) {
+  sarOperationRefInput.addEventListener('input', () => {
+    sarOperationRefInput.value = sarOperationRefInput.value.replace(/\D+/g, '').slice(0, 10);
+    scheduleOpActiveSync('operation-form-updated');
+  });
+}
+
+['sarOperationName', 'sarOperationType', 'sarExercise', 'sarSizing'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => scheduleOpActiveSync('operation-form-updated'));
+  el.addEventListener('change', () => scheduleOpActiveSync('operation-form-updated'));
+});
 
 
 </script>
