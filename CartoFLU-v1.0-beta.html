@@ -1710,14 +1710,14 @@
       <div class="form-section">
         <h3>// Station</h3>
         <div class="form-row">
-          <div class="form-group" style="max-width:150px">
+          <div class="form-group" style="max-width:150px" id="bearingTypeGroup">
             <label>Type</label>
             <select id="bearingType" onchange="onBearingTypeChange(this.value)">
               <option value="STATION" selected>Station</option>
               <option value="BALISE">Balise</option>
             </select>
           </div>
-          <div class="form-group">
+          <div class="form-group" id="callsignGroup">
             <label>Indicatif</label>
             <div class="cs-wrap">
               <select id="callsign" onchange="onCallsignInput(this.value)">
@@ -2138,7 +2138,10 @@
 
 <div id="mapContextMenu">
   <div class="ctx-title">➤ Actions carte</div>
-  <div class="ctx-item" onclick="ctxAddBearingHere()">
+  <div class="ctx-item" onclick="ctxAddBaliseHere()">
+    <span class="ctx-label">Ajouter une balise ici</span>
+  </div>
+  <div class="ctx-item" onclick="ctxAddReleveHere()">
     <span class="ctx-label">Ajouter un relevé ici</span>
   </div>
   <div class="ctx-item" onclick="toggleCtxStationsSubmenu(event)">
@@ -2655,7 +2658,7 @@ function ensureCallsignOption(callsign) {
   const select = document.getElementById('callsign');
   if (!select) return;
   const cs = normalizeCallsign(callsign);
-  if (!cs || cs === 'STATION') return;
+  if (!cs || cs === 'STATION' || cs === 'BALISE') return;
   if (Array.from(select.options).some(opt => opt.value === cs)) return;
   const opt = document.createElement('option');
   opt.value = cs;
@@ -3521,7 +3524,7 @@ function updateStationList() {
   const currentValue = normalizeCallsign(select?.value || '');
   if (select) {
     const selectable = [...new Set(checked)].sort();
-    if (currentValue && currentValue !== 'STATION' && !selectable.includes(currentValue)) {
+    if (currentValue && currentValue !== 'STATION' && currentValue !== 'BALISE' && !selectable.includes(currentValue)) {
       selectable.push(currentValue);
       selectable.sort();
     }
@@ -3950,13 +3953,37 @@ function toggleCtxStationsSubmenu(event) {
   document.getElementById('ctxStationList').classList.toggle('open');
 }
 
-function ctxAddBearingHere() {
+function ctxPrepareBearingHere(type = 'STATION') {
   closeMapContextMenu();
   if (!_ctxLatLng) return;
 
   if (!sidebarVisible) toggleSidebar();
   switchTab('add');
+  setBearingTypeVisibility(true);
   syncAllFormats(_ctxLatLng.lat, _ctxLatLng.lng, null);
+
+  const typeSelect = document.getElementById('bearingType');
+  if (typeSelect) {
+    typeSelect.value = (type === 'BALISE') ? 'BALISE' : 'STATION';
+    onBearingTypeChange(typeSelect.value);
+  }
+}
+
+function ctxAddBaliseHere() {
+  ctxPrepareBearingHere('BALISE');
+  if (!_ctxLatLng) return;
+  map.openPopup(
+    `<div class="popup-title" style="color:#ff2d55">✚ Nouvelle balise</div>
+     <div class="popup-meta">Onglet Relevé ouvert en mode <strong>Balise</strong>.<br>
+     Lat : ${_ctxLatLng.lat.toFixed(4)}<br>Lon : ${_ctxLatLng.lng.toFixed(4)}</div>`,
+    _ctxLatLng
+  );
+  notify('✚ Formulaire Balise prérempli avec la position du clic droit');
+}
+
+function ctxAddReleveHere() {
+  ctxPrepareBearingHere('STATION');
+  if (!_ctxLatLng) return;
   map.openPopup(
     `<div class="popup-title" style="color:var(--accent2)">📍 Nouveau relevé</div>
      <div class="popup-meta">Position injectée dans l'onglet Relevé.<br>
@@ -4096,15 +4123,19 @@ function updateColorPickerAvailability(currentCS) {
 
 let _lastStationCallsign = '';
 
+function setBearingTypeVisibility(hidden) {
+  const typeGroup = document.getElementById('bearingTypeGroup');
+  if (typeGroup) typeGroup.style.display = hidden ? 'none' : '';
+}
+
 function onBearingTypeChange(typeValue) {
   const type = normalizeCallsign(typeValue) || 'STATION';
   const select = document.getElementById('callsign');
   if (!select) return;
 
   if (type === 'BALISE') {
-    ensureCallsignOption('BALISE');
-    select.value = 'BALISE';
-    onCallsignInput('BALISE');
+    select.value = '';
+    onCallsignInput('');
     return;
   }
 
@@ -4123,14 +4154,16 @@ function onCallsignInput(val) {
   if (cs && cs !== 'BALISE') _lastStationCallsign = cs;
 
   const typeSelect = document.getElementById('bearingType');
-  if (typeSelect) typeSelect.value = (cs === 'BALISE') ? 'BALISE' : 'STATION';
-
-  const isBalise = cs === 'BALISE';
+  const selectedType = normalizeCallsign(typeSelect?.value || 'STATION');
+  const isBalise = selectedType === 'BALISE';
+  if (typeSelect && !isBalise) typeSelect.value = 'STATION';
   const azimutSection = document.getElementById('azimutFields');
   const ecouteRow = document.getElementById('ecouteNegative')?.closest('div[style]');
+  const callsignGroup = document.getElementById('callsignGroup');
   const btn = document.getElementById('addBearingBtn');
   if (azimutSection) azimutSection.style.display = isBalise ? 'none' : '';
   if (ecouteRow) ecouteRow.style.display = isBalise ? 'none' : '';
+  if (callsignGroup) callsignGroup.style.display = isBalise ? 'none' : '';
   if (btn) {
     if (isBalise) {
       btn.textContent = '✚ PLACER LA BALISE';
@@ -4571,7 +4604,10 @@ function getCoords() {
 
 function addBearing() {
   const { lat, lon } = getCoords();
-  const callsign = normalizeCallsign(document.getElementById("callsign").value) || "STATION";
+  const bearingType = normalizeCallsign(document.getElementById('bearingType')?.value || 'STATION');
+  const callsign = bearingType === 'BALISE'
+    ? 'BALISE'
+    : (normalizeCallsign(document.getElementById("callsign").value) || "STATION");
   const frequency = document.getElementById('frequency').value.trim() || '—';
   const notes = document.getElementById('notes').value.trim();
   const now = new Date();
@@ -5924,6 +5960,7 @@ function switchTab(name) {
   });
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'add') setBearingTypeVisibility(false);
   if (name !== 'add') clearBearingPreview();
 }
 
