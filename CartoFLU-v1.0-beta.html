@@ -2061,7 +2061,6 @@
       <div class="basemap-select-wrap">
         <select id="basemapSelect" onchange="changeBasemap(this.value)">
           <option value="osmorg">OSM</option>
-          <option value="ignplan">IGN</option>
           <option value="topo">Topo</option>
           <option value="ignortho">Orthophotos</option>
           <option value="ignscan25">IGN SCAN 25</option>
@@ -2393,7 +2392,7 @@ const BASEMAPS = {
 };
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
-let currentBasemapKey = 'osm';
+let currentBasemapKey = 'osmorg';
 let lastInternetAccessStatus = null;
 const localBasemapAutoInitAsked = new Set();
 
@@ -2445,6 +2444,34 @@ function resolveOfflineBasemap(key) {
     url: localUrl,
     attribution: `${bm.attribution} — serveur local`
   };
+}
+
+function findOfflineBasemapKey(preferredKey = currentBasemapKey) {
+  if (resolveOfflineBasemap(preferredKey)) return preferredKey;
+  const select = document.getElementById('basemapSelect');
+  const selectKeys = select ? Array.from(select.options).map(opt => opt.value) : [];
+  for (const key of selectKeys) {
+    if (resolveOfflineBasemap(key)) return key;
+  }
+  for (const key of Object.keys(BASEMAPS)) {
+    if (resolveOfflineBasemap(key)) return key;
+  }
+  return null;
+}
+
+async function switchToOfflineBasemap(preferredKey = currentBasemapKey) {
+  const fallbackKey = findOfflineBasemapKey(preferredKey);
+  if (!fallbackKey) {
+    notify('⚠ Aucun fond de carte local disponible pour bascule hors ligne', true);
+    return false;
+  }
+  await changeBasemap(fallbackKey);
+  const select = document.getElementById('basemapSelect');
+  if (select && Array.from(select.options).some(opt => opt.value === fallbackKey)) {
+    select.value = fallbackKey;
+  }
+  notify(`🗺️ Basculé en carte hors ligne (${fallbackKey})`);
+  return true;
 }
 
 function normalizeDownloadPlan(rawPlan) {
@@ -2590,7 +2617,7 @@ function createBasemapLayer(bm, key = '') {
   return layer;
 }
 
-let currentTileLayer = createBasemapLayer(resolveBasemap('osm') || BASEMAPS.osm, 'osm').addTo(map);
+let currentTileLayer = createBasemapLayer(resolveBasemap('osmorg') || BASEMAPS.osmorg, 'osmorg').addTo(map);
 
 async function changeBasemap(key) {
   ensureLocalBasemapPrepared(key);
@@ -2608,7 +2635,7 @@ async function changeBasemap(key) {
 
   if (currentTileLayer) map.removeLayer(currentTileLayer);
   currentTileLayer = createBasemapLayer(resolved, key).addTo(map);
-  currentBasemapKey = key in BASEMAPS ? key : 'osm';
+  currentBasemapKey = key in BASEMAPS ? key : 'osmorg';
   if (currentTileLayer.bringToBack) currentTileLayer.bringToBack();
 }
 
@@ -3514,15 +3541,19 @@ async function openOperation() {
     const online = initialInternetAccessCheckPromise
       ? await initialInternetAccessCheckPromise
       : await hasInternetAccess();
+    lastInternetAccessStatus = !!online;
     if (online) {
       notify('Accès internet détecté ✓');
       openSarOperationOverlay('connected');
     } else {
       notify('⚠ Accès internet indisponible', true);
+      await switchToOfflineBasemap(currentBasemapKey);
       openSarOfflineModal();
     }
   } catch (e) {
+    lastInternetAccessStatus = false;
     notify('⚠ Test réseau impossible, proposition du mode dégradé', true);
+    await switchToOfflineBasemap(currentBasemapKey);
     openSarOfflineModal();
   } finally {
     sarOperationCheckInFlight = false;
