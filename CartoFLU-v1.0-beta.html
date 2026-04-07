@@ -2394,6 +2394,8 @@ const BASEMAPS = {
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
 let currentBasemapKey = 'osm';
+let lastInternetAccessStatus = null;
+const localBasemapAutoInitAsked = new Set();
 
 function promptIgnScan25ApiKey(force = false) {
   const existing = (localStorage.getItem(IGN_SCAN25_APIKEY_STORAGE) || '').trim();
@@ -2432,6 +2434,131 @@ function resolveBasemap(key, opts = {}) {
   return bm;
 }
 
+function resolveOfflineBasemap(key) {
+  const localBasemapUrls = runtimeConfig.localBasemapUrls || {};
+  const localUrl = (localBasemapUrls[`${key}_local`] || localBasemapUrls[key] || '').trim();
+  if (!localUrl) return null;
+  const bm = BASEMAPS[key] || BASEMAPS.osm;
+  return {
+    ...bm,
+    type: 'xyz',
+    url: localUrl,
+    attribution: `${bm.attribution} — serveur local`
+  };
+}
+
+function normalizeDownloadPlan(rawPlan) {
+  const fallback = runtimeConfig.localBasemapDownload || {};
+  const minZoom = Math.max(0, Math.min(18, Number(rawPlan?.minZoom ?? fallback.minZoom ?? 6)));
+  const maxZoom = Math.max(minZoom, Math.min(18, Number(rawPlan?.maxZoom ?? fallback.maxZoom ?? 14)));
+  const rawBounds = rawPlan?.bounds || fallback.bounds || {};
+  const north = Number(rawBounds.north ?? 51.2);
+  const south = Number(rawBounds.south ?? 41.2);
+  const west = Number(rawBounds.west ?? -5.8);
+  const east = Number(rawBounds.east ?? 9.8);
+  return {
+    minZoom,
+    maxZoom,
+    bounds: {
+      north: Math.max(south, north),
+      south: Math.min(south, north),
+      west: Math.min(west, east),
+      east: Math.max(west, east)
+    }
+  };
+}
+
+function getOnlineSeedUrlTemplate(key) {
+  if (key === 'ignplan') {
+    return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
+  }
+  if (key === 'ignortho') {
+    return 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}';
+  }
+  const bm = BASEMAPS[key];
+  if (!bm?.url || bm.type === 'wms' || bm.restricted) return null;
+  return bm.url;
+}
+
+function latLngToTile(lat, lon, zoom) {
+  const z = Math.max(0, Number(zoom) || 0);
+  const n = Math.pow(2, z);
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const latRad = lat * Math.PI / 180;
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + (1 / Math.cos(latRad))) / Math.PI) / 2 * n);
+  return {
+    z,
+    x: Math.max(0, Math.min(n - 1, x)),
+    y: Math.max(0, Math.min(n - 1, y))
+  };
+}
+
+function buildLocalProbeUrl(localUrlTemplate) {
+  const c = map.getCenter();
+  const z = Math.max(0, Math.min(18, map.getZoom() || 0));
+  const tile = latLngToTile(c.lat, c.lng, z);
+  return localUrlTemplate
+    .replace('{z}', String(tile.z))
+    .replace('{x}', String(tile.x))
+    .replace('{y}', String(tile.y));
+}
+
+async function ensureLocalBasemapPrepared(key) {
+  const localBasemapUrls = runtimeConfig.localBasemapUrls || {};
+  const localUrlTemplate = (localBasemapUrls[`${key}_local`] || localBasemapUrls[key] || '').trim();
+  if (!localUrlTemplate || localBasemapAutoInitAsked.has(key)) return;
+  if (runtimeConfig.forceOffline || navigator.onLine === false || lastInternetAccessStatus === false) return;
+
+  const probeUrl = buildLocalProbeUrl(localUrlTemplate);
+  const localReady = await probeInternetImage(probeUrl, 1200);
+  if (localReady) return;
+
+  localBasemapAutoInitAsked.add(key);
+  const wantsCreate = window.confirm(
+    'Cartes locales inexistantes.\nVoulez-vous procéder à la création du répertoire ?'
+  );
+  if (!wantsCreate) return;
+
+  const downloadPlan = normalizeDownloadPlan(runtimeConfig.localBasemapDownload);
+  let estimatedTiles = 0;
+  for (let z = downloadPlan.minZoom; z <= downloadPlan.maxZoom; z++) {
+    const nw = latLngToTile(downloadPlan.bounds.north, downloadPlan.bounds.west, z);
+    const se = latLngToTile(downloadPlan.bounds.south, downloadPlan.bounds.east, z);
+    estimatedTiles += Math.max(1, se.x - nw.x + 1) * Math.max(1, se.y - nw.y + 1);
+  }
+  const seedUrlTemplate = getOnlineSeedUrlTemplate(key);
+  if (!seedUrlTemplate) {
+    notify(`⚠ Seed automatique indisponible pour "${key}"`, true);
+    return;
+  }
+  const confirmAllTiles = window.confirm(
+    `Télécharger tout le fond local "${key}" ?\nZone: N${downloadPlan.bounds.north} S${downloadPlan.bounds.south} W${downloadPlan.bounds.west} E${downloadPlan.bounds.east}\nZoom: ${downloadPlan.minZoom} → ${downloadPlan.maxZoom}\nTuiles estimées: ${estimatedTiles}`
+  );
+  if (!confirmAllTiles) return;
+
+  try {
+    const resp = await fetch('prepare-local-basemap.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key,
+        localUrlTemplate,
+        seedUrlTemplate,
+        plan: downloadPlan
+      })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      notify(`⚠ Échec préparation cartes locales (${data.error || resp.status})`, true);
+      return;
+    }
+    notify(`✓ Cartes locales préparées (${data.downloaded || 0} téléchargée(s), ${data.failed || 0} échec(s))`);
+  } catch (e) {
+    console.warn('[CartoFLU] prepare-local-basemap:', e);
+    notify('⚠ Impossible de préparer les cartes locales', true);
+  }
+}
+
 function createBasemapLayer(bm, key = '') {
   const commonOptions = {
     attribution: bm.attribution,
@@ -2461,11 +2588,18 @@ function createBasemapLayer(bm, key = '') {
 
 let currentTileLayer = createBasemapLayer(resolveBasemap('osm') || BASEMAPS.osm, 'osm').addTo(map);
 
-function changeBasemap(key) {
-  const resolved = resolveBasemap(key);
+async function changeBasemap(key) {
+  ensureLocalBasemapPrepared(key);
+  const shouldUseOfflineBasemap = runtimeConfig.forceOffline || navigator.onLine === false || lastInternetAccessStatus === false;
+  const offlineCandidate = shouldUseOfflineBasemap ? resolveOfflineBasemap(key) : null;
+  const resolved = offlineCandidate || resolveBasemap(key);
   if (!resolved) {
     document.getElementById('basemapSelect').value = currentBasemapKey;
     return;
+  }
+
+  if (shouldUseOfflineBasemap && !offlineCandidate) {
+    notify(`⚠ Fond local manquant pour "${key}". Ajoutez "${key}_local" dans config.json`, true);
   }
 
   if (currentTileLayer) map.removeLayer(currentTileLayer);
@@ -2573,6 +2707,12 @@ const runtimeConfig = {
   aprsApiKey: '',
   departementCode: '25',
   forceOffline: false,
+  localBasemapUrls: {},
+  localBasemapDownload: {
+    minZoom: 6,
+    maxZoom: 14,
+    bounds: { north: 51.2, south: 41.2, west: -5.8, east: 9.8 }
+  },
   maintenance: false,
   softwareVersion: '1.0'
 };
@@ -2606,6 +2746,12 @@ async function loadRuntimeConfig() {
     runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
     runtimeConfig.departementCode = String(cfg['departement-code'] ?? cfg.departementCode ?? runtimeConfig.departementCode);
     runtimeConfig.forceOffline = !!(cfg['force-offline'] ?? cfg.forceOffline ?? runtimeConfig.forceOffline);
+    runtimeConfig.localBasemapUrls = (cfg['local-basemap-urls'] && typeof cfg['local-basemap-urls'] === 'object')
+      ? cfg['local-basemap-urls']
+      : ((cfg.localBasemapUrls && typeof cfg.localBasemapUrls === 'object') ? cfg.localBasemapUrls : runtimeConfig.localBasemapUrls);
+    runtimeConfig.localBasemapDownload = normalizeDownloadPlan(
+      cfg['local-basemap-download'] ?? cfg.localBasemapDownload ?? runtimeConfig.localBasemapDownload
+    );
     runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
     runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
   } catch (e) {
@@ -3205,8 +3351,14 @@ async function hasInternetAccess() {
 function startInitialInternetAccessCheck() {
   if (initialInternetAccessCheckPromise) return initialInternetAccessCheckPromise;
   initialInternetAccessCheckPromise = hasInternetAccess()
-    .then(online => !!online)
-    .catch(() => false);
+    .then(online => {
+      lastInternetAccessStatus = !!online;
+      return lastInternetAccessStatus;
+    })
+    .catch(() => {
+      lastInternetAccessStatus = false;
+      return false;
+    });
   return initialInternetAccessCheckPromise;
 }
 

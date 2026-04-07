@@ -72,7 +72,21 @@ Pour une utilisation sans internet (terrain, exercice isolé) :
 
 1. Télécharger les tuiles OSM localement, avec Mobile Atlas Créator par exemple
 2. Lancer `serveur_tuiles.bat` (à placer à la racine du dossier des tuiles) — démarre un serveur Python sur `localhost:8080`
-3. Dans CartoFLU, sélectionner le fond de carte **"📴 Local (hors ligne)"**
+3. Configurer `config.json` avec les URL de tuiles locales par fond:
+
+```json
+"local-basemap-urls": {
+  "ignplan_local": "http://localhost:8080/ignplan_local/{z}/{x}/{y}.png"
+},
+"local-basemap-download": {
+  "minZoom": 6,
+  "maxZoom": 14,
+  "bounds": { "north": 51.2, "south": 41.2, "west": -5.8, "east": 9.8 }
+}
+```
+
+4. Dans CartoFLU, le fond sélectionné bascule automatiquement vers sa version `_local` si internet est indisponible.
+5. En mode connecté, si les cartes locales sont absentes, CartoFLU propose automatiquement de créer le répertoire et de télécharger **tout le fond** selon `local-basemap-download` (zone + niveaux de zoom).
 
 ## Structure du dépôt
 
