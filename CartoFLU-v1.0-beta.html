@@ -145,6 +145,44 @@
   .header-op-btn:active {
     transform: translateY(1px);
   }
+  .operation-menu-btn {
+    position: relative;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+  }
+  #currentOperationLabel {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+    opacity: 1 !important;
+    gap: 8px;
+  }
+  #currentOperationLabel .op-arrow {
+    font-size: 12px;
+    opacity: 0.9;
+  }
+  #currentOperationLabel.open .op-arrow {
+    transform: rotate(180deg);
+  }
+  #currentOperationDropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    display: none;
+    min-width: 100%;
+    background: rgba(12,14,28,0.98);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.45), 0 0 10px rgba(0,212,255,0.12);
+    z-index: 1200;
+    padding: 6px;
+  }
+  #currentOperationDropdown.open { display: block; }
+  #currentOperationDropdown #closeOperationBtn {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
 
   .uncertainty-sector {
     fill: url(#uncertaintyHatchPattern) !important;
@@ -1186,6 +1224,13 @@
   .aprs-age { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--muted); }
   .aprs-meta { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--muted); margin-top:3px; line-height:1.6; }
   .aprs-actions { display:flex; gap:5px; margin-top:6px; }
+  #tab-aprs.aprs-disabled {
+    opacity: 0.55;
+    filter: grayscale(0.35);
+  }
+  #tab-aprs.aprs-disabled .form-section {
+    border-color: rgba(255,255,255,0.08);
+  }
   .spinner { display:inline-block;width:10px;height:10px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
 
@@ -1632,8 +1677,15 @@
   <nav class="header-ops" aria-label="Menu des opérations">
     <button class="header-op-btn" id="openOperationBtn" type="button" onclick="openOperation()">Ouvrir une operation</button>
     <button class="header-op-btn" id="joinOperationBtn" type="button" onclick="joinOperation()">Rejoindre une operation</button>
-    <div class="header-op-btn" id="currentOperationLabel" style="display:none; cursor:default; pointer-events:none; opacity:0.9;" aria-disabled="true">Operation : —</div>
-    <button class="header-op-btn" id="closeOperationBtn" type="button" onclick="closeOperation()" style="display:none;">Cloturer l'operation</button>
+    <div class="operation-menu-btn" id="currentOperationMenu" style="display:none;">
+      <button class="header-op-btn" id="currentOperationLabel" type="button" onclick="toggleCurrentOperationMenu(event)" aria-expanded="false">
+        Operation : —
+        <span class="op-arrow">▾</span>
+      </button>
+      <div id="currentOperationDropdown">
+        <button class="header-op-btn" id="closeOperationBtn" type="button" onclick="closeOperation()">Cloturer l'operation</button>
+      </div>
+    </div>
     <div class="rollcall-btn" id="rollcallContainer" style="display:none;">
     <div id="rollcallToggle" class="header-op-btn" onclick="toggleRollcall()">
       📋 APPEL
@@ -1653,17 +1705,7 @@
           </select>
         </div>
       </div>
-      <!-- Bouton chargement liste -->
       <div style="padding:6px 14px 2px;display:flex;gap:6px;align-items:center;">
-        <button onclick="loadCallsignFile()" title="Recharger le fichier member-list.json"
-          style="flex:1;background:rgba(0,212,255,0.08);border:1px solid var(--accent);
-                 border-radius:4px;color:var(--accent);font-family:'Share Tech Mono',monospace;
-                 font-size:10px;letter-spacing:1px;padding:4px 8px;cursor:pointer;
-                 text-transform:uppercase;transition:background .2s;"
-          onmouseover="this.style.background='rgba(0,212,255,0.18)'"
-          onmouseout="this.style.background='rgba(0,212,255,0.08)'">
-          📂 Recharger members .json
-        </button>
         <span id="rcFileStatus" style="font-family:'Share Tech Mono',monospace;font-size:9px;
               color:var(--muted);white-space:nowrap;">member-list.json non chargé</span>
       </div>
@@ -2013,7 +2055,7 @@
           L'API APRS.fi utilisée ici retourne la dernière position (<code>what=loc</code>). Le tracé se construit à chaque rafraîchissement.
         </div>
         <div style="display:flex;gap:6px;margin-top:6px">
-          <button class="btn btn-primary" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
+          <button class="btn btn-primary" id="aprsFetchBtn" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
           <button class="btn btn-secondary" onclick="stopAprs()" id="aprsStopBtn" style="display:none">⏹ Stop</button>
         </div>
       </div>
@@ -2068,7 +2110,6 @@
           <option value="ignscan100">IGN SCAN 100</option>
           <option value="ignscanoaci">IGN SCAN OACI</option>
           <option value="ignscan25tour">IGN SCAN 25 Tour</option>
-          <option value="ignscan25">IGN SCAN 25</option>
         </select>
       </div>
     </div>
@@ -2256,6 +2297,7 @@ const map = L.map('map', {
   zoomControl: false
 });
 L.svg().addTo(map);
+map.attributionControl.setPrefix('<a href="https://gnl-solution.fr" target="_blank" rel="noopener noreferrer">🇫🇷 Made in GNL</a>');
 
 // Force Leaflet to recalculate dimensions once layout is stable
 setTimeout(() => map.invalidateSize(), 100);
@@ -2447,20 +2489,6 @@ const BASEMAPS = {
     attribution: '© IGN - Géoplateforme',
     maxZoom: 19
   },
-  ignscan25: {
-    label: 'IGN SCAN 25',
-    type: 'wms',
-    restricted: true,
-    url: 'https://data.geopf.fr/private/wms-r/',
-    options: {
-      layers: 'GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN25TOUR',
-      format: 'image/png',
-      transparent: false,
-      version: '1.3.0'
-    },
-    attribution: '© IGN - Géoplateforme',
-    maxZoom: 19
-  },
   satellite: {
     label: 'Esri World Imagery',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -2470,10 +2498,65 @@ const BASEMAPS = {
 };
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
-const IGN_HASH_PROTECTED_BASEMAPS = new Set(['ignscan25', 'ignmaps', 'ignscan100', 'ignscanoaci', 'ignscan25tour']);
+const IGN_HASH_PROTECTED_BASEMAPS = new Set(['ignmaps', 'ignscan100', 'ignscanoaci', 'ignscan25tour']);
+const OFFLINE_DEFAULT_BASEMAP_KEY = 'ignplan';
 let currentBasemapKey = 'osmorg';
 let lastInternetAccessStatus = null;
 const localBasemapAutoInitAsked = new Set();
+let _basemapSelectOptionsCache = null;
+
+function isOfflineBasemapMode() {
+  return runtimeConfig.forceOffline || navigator.onLine === false || lastInternetAccessStatus === false;
+}
+
+function cacheBasemapSelectOptions() {
+  const select = document.getElementById('basemapSelect');
+  if (!select || _basemapSelectOptionsCache) return;
+  _basemapSelectOptionsCache = Array.from(select.options).map(opt => ({
+    value: opt.value,
+    text: opt.textContent
+  }));
+}
+
+function refreshBasemapSelectOptions() {
+  const select = document.getElementById('basemapSelect');
+  if (!select) return;
+  cacheBasemapSelectOptions();
+  const offlineMode = isOfflineBasemapMode();
+  const allOptions = _basemapSelectOptionsCache || [];
+  const visibleOptions = offlineMode
+    ? allOptions.filter(opt => !!resolveOfflineBasemap(opt.value))
+    : allOptions;
+
+  select.innerHTML = '';
+  visibleOptions.forEach(opt => {
+    const node = document.createElement('option');
+    node.value = opt.value;
+    node.textContent = opt.text;
+    select.appendChild(node);
+  });
+
+  if (!visibleOptions.length) {
+    allOptions.forEach(opt => {
+      const node = document.createElement('option');
+      node.value = opt.value;
+      node.textContent = opt.text;
+      select.appendChild(node);
+    });
+  }
+
+  const currentExists = Array.from(select.options).some(opt => opt.value === currentBasemapKey);
+  if (currentExists) {
+    select.value = currentBasemapKey;
+    return;
+  }
+  const fallbackKey = offlineMode
+    ? findOfflineBasemapKey(OFFLINE_DEFAULT_BASEMAP_KEY)
+    : (select.options[0]?.value || currentBasemapKey);
+  if (fallbackKey && Array.from(select.options).some(opt => opt.value === fallbackKey)) {
+    select.value = fallbackKey;
+  }
+}
 
 function promptIgnScan25ApiKey(force = false) {
   const fromConfig = (runtimeConfig.ignScan25HashKey || '').trim();
@@ -2481,7 +2564,7 @@ function promptIgnScan25ApiKey(force = false) {
   if (existing && !force) return existing;
 
   const entered = window.prompt(
-    "Les fonds IGN protégés (SCAN 25 / SCAN 25 TOUR / SCAN 100 / SCAN OACI / Cartes) nécessitent une clé HASH cartes.gouv.fr.\nCollez votre clé pour activer ces fonds :",
+    "Les fonds IGN protégés (SCAN 25 TOUR / SCAN 100 / SCAN OACI / Cartes) nécessitent une clé HASH cartes.gouv.fr.\nCollez votre clé pour activer ces fonds :",
     existing
   );
 
@@ -2528,6 +2611,7 @@ function resolveOfflineBasemap(key) {
 }
 
 function findOfflineBasemapKey(preferredKey = currentBasemapKey) {
+  if (resolveOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY)) return OFFLINE_DEFAULT_BASEMAP_KEY;
   if (resolveOfflineBasemap(preferredKey)) return preferredKey;
   const select = document.getElementById('basemapSelect');
   const selectKeys = select ? Array.from(select.options).map(opt => opt.value) : [];
@@ -2542,6 +2626,7 @@ function findOfflineBasemapKey(preferredKey = currentBasemapKey) {
 
 async function switchToOfflineBasemap(preferredKey = currentBasemapKey, opts = {}) {
   const silent = !!opts.silent;
+  refreshBasemapSelectOptions();
   const fallbackKey = findOfflineBasemapKey(preferredKey);
   if (!fallbackKey) {
     if (!silent) notify('⚠ Aucun fond de carte local disponible pour bascule hors ligne', true);
@@ -2701,10 +2786,10 @@ function createBasemapLayer(bm, key = '') {
     layer = L.tileLayer(bm.url, commonOptions);
   }
 
-  if (key === 'ignscan25') {
+  if (IGN_HASH_PROTECTED_BASEMAPS.has(key)) {
     layer.once('tileerror', () => {
       localStorage.removeItem(IGN_SCAN25_APIKEY_STORAGE);
-      notify('⚠ IGN SCAN 25 : accès refusé ou clé HASH invalide', true);
+      notify('⚠ Fond IGN protégé : accès refusé ou clé HASH invalide', true);
     });
   }
 
@@ -2716,6 +2801,7 @@ let currentTileLayer = createBasemapLayer(resolveBasemap('osmorg') || BASEMAPS.o
 async function changeBasemap(key) {
   ensureLocalBasemapPrepared(key);
   const shouldUseOfflineBasemap = runtimeConfig.forceOffline || navigator.onLine === false || lastInternetAccessStatus === false;
+  refreshBasemapSelectOptions();
   const offlineCandidate = shouldUseOfflineBasemap ? resolveOfflineBasemap(key) : null;
   const resolved = offlineCandidate || resolveBasemap(key);
   if (!resolved) {
@@ -2734,6 +2820,7 @@ async function changeBasemap(key) {
 }
 
 const zoomControl = L.control.zoom({ position: 'topleft' }).addTo(map);
+L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 120 }).addTo(map);
 
 const mapToolbar = document.querySelector('.map-toolbar');
 const zoomContainer = zoomControl.getContainer();
@@ -2891,6 +2978,7 @@ async function loadRuntimeConfig() {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadRuntimeConfig();
   applyRuntimeConfig();
+  refreshBasemapSelectOptions();
   await startInitialInternetAccessCheck();
   updateSidebarToggleButton();
   updateStationList();
@@ -2898,6 +2986,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   onCallsignInput(document.getElementById('callsign')?.value || '');
   await loadMemberListFromUrl();
   await hydrateActiveOperationFromServer();
+  await flushPendingOpActiveSync('startup');
 });
 
 function normalizeCallsign(raw) {
@@ -3201,9 +3290,11 @@ let initialInternetAccessCheckPromise = null;
 let currentSarOperation = null;
 let lastSarOperationMeta = null;
 const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
+const OP_ACTIVE_PENDING_KEY = 'cartoflu.op_active.pending_payload';
 let _opActiveSyncTimer = null;
 let _opActiveSyncInFlight = false;
 let _opActiveLastPayload = '';
+let _opActiveRetryTimer = null;
 
 function hasActiveOperation() {
   return !!currentSarOperation;
@@ -3313,8 +3404,51 @@ async function flushOpActiveSync(source = 'ui') {
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     _opActiveLastPayload = payloadText;
+    localStorage.removeItem(OP_ACTIVE_PENDING_KEY);
+    if (_opActiveRetryTimer) {
+      clearTimeout(_opActiveRetryTimer);
+      _opActiveRetryTimer = null;
+    }
   } catch (e) {
+    localStorage.setItem(OP_ACTIVE_PENDING_KEY, payloadText);
+    if (!_opActiveRetryTimer) {
+      _opActiveRetryTimer = setTimeout(() => {
+        _opActiveRetryTimer = null;
+        flushOpActiveSync('retry-after-failure');
+      }, 3000);
+    }
     console.warn('[CartoFLU] Sync op-active.json impossible :', e);
+  } finally {
+    _opActiveSyncInFlight = false;
+  }
+}
+
+async function flushPendingOpActiveSync(source = 'pending-retry') {
+  const pendingPayloadText = localStorage.getItem(OP_ACTIVE_PENDING_KEY);
+  if (!pendingPayloadText || _opActiveSyncInFlight) return;
+  _opActiveSyncInFlight = true;
+  try {
+    const resp = await fetch(OP_ACTIVE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: pendingPayloadText,
+      keepalive: true
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    _opActiveLastPayload = pendingPayloadText;
+    localStorage.removeItem(OP_ACTIVE_PENDING_KEY);
+    if (_opActiveRetryTimer) {
+      clearTimeout(_opActiveRetryTimer);
+      _opActiveRetryTimer = null;
+    }
+  } catch (e) {
+    if (!_opActiveRetryTimer) {
+      _opActiveRetryTimer = setTimeout(() => {
+        _opActiveRetryTimer = null;
+        flushPendingOpActiveSync('pending-retry-timer');
+      }, 3000);
+    }
+    console.warn(`[CartoFLU] Reprise sync op-active.json (${source}) impossible :`, e);
   } finally {
     _opActiveSyncInFlight = false;
   }
@@ -3331,6 +3465,10 @@ function scheduleOpActiveSync(source = 'ui') {
 window.addEventListener('beforeunload', () => {
   if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
   flushOpActiveSync('beforeunload');
+});
+
+window.addEventListener('online', () => {
+  flushPendingOpActiveSync('browser-online');
 });
 
 function restoreRollcallFromOpActive(stations = []) {
@@ -3374,32 +3512,44 @@ function restoreBaliseFromOpActive(savedBalise) {
   }
 }
 
+function hydrateActiveOperationFromPayload(data, sourceLabel = 'op-active.json') {
+  if (!data?.active || !data?.operation) return false;
+
+  currentSarOperation = { ...data.operation };
+  lastSarOperationMeta = { ...data.operation };
+  updateOperationControls();
+
+  const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
+  const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
+  if (savedBearings.length || savedNegListenings.length) {
+    restoreBearings(savedBearings, savedNegListenings);
+  }
+  restoreBaliseFromOpActive(data?.session?.balise || null);
+
+  restoreRollcallFromOpActive(data?.rollcall?.stations || []);
+  updateStationList();
+  notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis ${sourceLabel} ✓`);
+  scheduleOpActiveSync('operation-restored');
+  return true;
+}
+
 async function hydrateActiveOperationFromServer() {
   try {
     const resp = await fetch('op-active.json', { cache: 'no-store' });
-    if (!resp.ok) return false;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    if (!data?.active || !data?.operation) return false;
-
-    currentSarOperation = { ...data.operation };
-    lastSarOperationMeta = { ...data.operation };
-    updateOperationControls();
-
-    const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
-    const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
-    if (savedBearings.length || savedNegListenings.length) {
-      restoreBearings(savedBearings, savedNegListenings);
-    }
-    restoreBaliseFromOpActive(data?.session?.balise || null);
-
-    restoreRollcallFromOpActive(data?.rollcall?.stations || []);
-    updateStationList();
-    notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis op-active.json ✓`);
-    scheduleOpActiveSync('operation-restored');
-    return true;
+    return hydrateActiveOperationFromPayload(data, 'op-active.json');
   } catch (e) {
     console.warn('[CartoFLU] Restauration op-active.json impossible :', e);
-    return false;
+    const pendingPayloadText = localStorage.getItem(OP_ACTIVE_PENDING_KEY);
+    if (!pendingPayloadText) return false;
+    try {
+      const pendingData = JSON.parse(pendingPayloadText);
+      return hydrateActiveOperationFromPayload(pendingData, 'sauvegarde locale hors ligne');
+    } catch (parseErr) {
+      console.warn('[CartoFLU] Restauration locale op-active impossible :', parseErr);
+      return false;
+    }
   }
 }
 
@@ -3415,11 +3565,40 @@ function getCurrentOperationLabelText(operation) {
   return `${isExercise ? 'Exercice ' : ''}${type} : ${ref}`;
 }
 
+function isAprsUnavailableInCurrentMode() {
+  return !!(currentSarOperation && currentSarOperation.mode === 'degraded');
+}
+
+function applyAprsAvailabilityState() {
+  const aprsPanel = document.getElementById('tab-aprs');
+  const aprsStatus = document.getElementById('aprsStatus');
+  const disabled = isAprsUnavailableInCurrentMode();
+  const controlIds = ['aprsApiKey', 'aprsRefresh', 'aprsShowTrail', 'aprsTimerange', 'aprsFetchBtn', 'aprsStopBtn'];
+
+  if (aprsPanel) aprsPanel.classList.toggle('aprs-disabled', disabled);
+  controlIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+
+  if (disabled) {
+    stopAprs(false);
+    clearAprsMarkers();
+    if (aprsStatus) {
+      aprsStatus.innerHTML = `<span style="color:var(--accent2)">⚠ Service APRS indisponible en mode dégradé (hors ligne)</span>`;
+    }
+  } else if (aprsStatus && !aprsStatus.textContent.trim()) {
+    aprsStatus.textContent = "En attente d'interrogation…";
+  }
+}
+
 function updateOperationControls() {
   const openBtn = document.getElementById('openOperationBtn');
   const joinBtn = document.getElementById('joinOperationBtn');
   const closeBtn = document.getElementById('closeOperationBtn');
   const operationLabel = document.getElementById('currentOperationLabel');
+  const operationMenu = document.getElementById('currentOperationMenu');
+  const operationDropdown = document.getElementById('currentOperationDropdown');
   const rollcallContainer = document.getElementById('rollcallContainer');
   const releveBtn = document.getElementById('toggleReleveBtn');
   const operationActive = hasActiveOperation();
@@ -3429,22 +3608,25 @@ function updateOperationControls() {
 
   setElementDisplay(openBtn, !operationActive);
   setElementDisplay(joinBtn, !operationActive);
+  setElementDisplay(operationMenu, operationActive, 'inline-flex');
   setElementDisplay(closeBtn, operationActive);
-  setElementDisplay(operationLabel, operationActive);
+  setElementDisplay(operationLabel, operationActive, 'inline-flex');
   setElementDisplay(rollcallContainer, operationActive, 'inline-flex');
   setElementDisplay(releveBtn, operationActive);
 
   if (operationLabel) {
-    operationLabel.textContent = operationActive
-      ? operationText
-      : 'Operation : —';
+    operationLabel.innerHTML = `${operationActive ? operationText : 'Operation : —'}<span class="op-arrow">▾</span>`;
+    operationLabel.setAttribute('aria-expanded', 'false');
   }
 
   if (!operationActive) {
+    operationDropdown?.classList.remove('open');
+    operationLabel?.classList.remove('open');
     document.getElementById('rollcallDropdown')?.classList.remove('open');
     document.getElementById('rollcallToggle')?.classList.remove('open');
     closeMapContextMenu();
   }
+  applyAprsAvailabilityState();
 }
 
 function setOpenOperationBusy(isBusy) {
@@ -3493,18 +3675,31 @@ function startInitialInternetAccessCheck() {
   initialInternetAccessCheckPromise = hasInternetAccess()
     .then(async online => {
       lastInternetAccessStatus = !!online;
+      refreshBasemapSelectOptions();
       if (!lastInternetAccessStatus) {
-        await switchToOfflineBasemap(currentBasemapKey, { silent: true });
+        await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
       }
       return lastInternetAccessStatus;
     })
     .catch(async () => {
       lastInternetAccessStatus = false;
-      await switchToOfflineBasemap(currentBasemapKey, { silent: true });
+      refreshBasemapSelectOptions();
+      await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
       return false;
     });
   return initialInternetAccessCheckPromise;
 }
+
+window.addEventListener('offline', async () => {
+  lastInternetAccessStatus = false;
+  refreshBasemapSelectOptions();
+  await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
+});
+
+window.addEventListener('online', () => {
+  lastInternetAccessStatus = true;
+  refreshBasemapSelectOptions();
+});
 
 function resetSarOperationForm() {
   const name = document.getElementById('sarOperationName');
@@ -3676,8 +3871,10 @@ function submitSarOperation() {
 
   closeSarOperationOverlay();
   updateOperationControls();
+  showRollcallReminderBanner();
   notify(`📂 Opération ${name} ouverte en ${sarOperationMode === 'degraded' ? 'mode dégradé' : 'mode connecté'} ✓`);
   scheduleOpActiveSync('operation-opened');
+  flushOpActiveSync('operation-opened-immediate');
 }
 
 async function openOperation() {
@@ -3798,10 +3995,29 @@ function toggleRollcall() {
   if (!btn || !dd) return;
   const open = dd.classList.toggle('open');
   btn.classList.toggle('open', open);
+  document.getElementById('currentOperationDropdown')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
+  closePcMenu();
+}
+
+function toggleCurrentOperationMenu(event) {
+  event?.stopPropagation();
+  const btn = document.getElementById('currentOperationLabel');
+  const dd = document.getElementById('currentOperationDropdown');
+  if (!btn || !dd || !hasActiveOperation()) return;
+  const open = dd.classList.toggle('open');
+  btn.classList.toggle('open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   closePcMenu();
 }
 
 document.addEventListener('click', e => {
+  if (!e.target.closest('.operation-menu-btn')) {
+    document.getElementById('currentOperationDropdown')?.classList.remove('open');
+    document.getElementById('currentOperationLabel')?.classList.remove('open');
+    document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
+  }
   if (!e.target.closest('.rollcall-btn')) {
     document.getElementById('rollcallDropdown')?.classList.remove('open');
     document.getElementById('rollcallToggle')?.classList.remove('open');
@@ -3816,6 +4032,9 @@ function togglePcMenu() {
   const dd  = document.getElementById('pcMenuDropdown');
   const open = dd.classList.toggle('open');
   btn.classList.toggle('open', open);
+  document.getElementById('currentOperationDropdown')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
   document.getElementById('rollcallDropdown')?.classList.remove('open');
   document.getElementById('rollcallToggle')?.classList.remove('open');
 }
@@ -5120,7 +5339,6 @@ function addBearing() {
 
   drawBearing(item);
   renderList();
-  switchTab('list');
   // Stopper le clignotement et supprimer l'ancien tracé en édition
   stopEditingBlink();
   window._editingOriginal = null;
@@ -5134,6 +5352,7 @@ function addBearing() {
   document.getElementById('notes').value = '';
   document.getElementById('bearing').value = '';
   clearBearingPreview();
+  if (sidebarVisible) toggleSidebar();
   writeSaveFile(true);
   scheduleOpActiveSync('bearing-added');
 }
@@ -6401,6 +6620,7 @@ async function persistAprsKeyToConfig(key) {
 }
 
 function onAprsApiKeyInput() {
+  if (isAprsUnavailableInCurrentMode()) return;
   if (_aprsKeySaveTimer) clearTimeout(_aprsKeySaveTimer);
   _aprsKeySaveTimer = setTimeout(async () => {
     const key = document.getElementById('aprsApiKey')?.value.trim() || '';
@@ -6426,6 +6646,7 @@ function loadAprsKey() {
 }
 
 async function tryAutoStartAprs() {
+  if (isAprsUnavailableInCurrentMode()) return;
   if (!aprsAutoStartRequested || aprsTimer) return;
   const apiKey = document.getElementById('aprsApiKey')?.value.trim();
   const callsigns = getAprsTrackedBaseCallsigns();
@@ -6452,6 +6673,10 @@ function qrkToWeight(qrk) {
 }
 
 async function fetchAprs() {
+  if (isAprsUnavailableInCurrentMode()) {
+    notify('⚠ APRS indisponible en mode dégradé (hors ligne)', true);
+    return;
+  }
   const apiKey     = document.getElementById('aprsApiKey').value.trim();
   const callsigns  = getAprsTrackedBaseCallsigns();
   const refreshSec = parseInt(document.getElementById('aprsRefresh').value);
@@ -6873,10 +7098,9 @@ function clearAprsMarkers() {
   aprsMarkers = {}; aprsTrails = {}; aprsHistory = {};
 }
 
-// Charger la clé sauvegardée au démarrage
-window.addEventListener('load', () => {
-  loadAprsKey();
-  setTimeout(() => { tryAutoStartAprs(); }, 400);
+function showRollcallReminderBanner() {
+  const existingBanner = document.getElementById('welcomeBannerAppel');
+  if (existingBanner) existingBanner.remove();
   const bannerAppel = document.createElement('div');
   bannerAppel.id = 'welcomeBannerAppel';
   bannerAppel.style.cssText = `
@@ -6894,6 +7118,12 @@ window.addEventListener('load', () => {
       border-radius:4px;font-size:12px;cursor:pointer;">✕</button>
   `;
   document.body.appendChild(bannerAppel);
+}
+
+// Charger la clé sauvegardée au démarrage
+window.addEventListener('load', () => {
+  loadAprsKey();
+  setTimeout(() => { tryAutoStartAprs(); }, 400);
 });
 
 // ─── SAUVEGARDE FICHIER (File System Access API) ──────────────────────────────
