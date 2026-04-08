@@ -2357,14 +2357,18 @@
   </div>
 </div>
 
-<div id="sarArchivedModal" class="sar-modal-overlay" aria-hidden="true">
-  <div class="sar-modal-box">
-    <div class="sar-modal-head">Opérations archivées</div>
-    <div class="sar-modal-body">
-      <div id="sarArchivedList" class="sar-archived-list"></div>
-    </div>
-    <div class="sar-modal-actions">
-      <button type="button" class="btn btn-secondary" onclick="closeArchivedOperationsModal()">Fermer</button>
+<div id="sarArchivedModal" class="sar-operation-overlay" aria-hidden="true">
+  <div class="sar-operation-shell">
+    <div class="sar-operation-body">
+      <div class="sar-operation-card">
+        <div class="form-section" style="margin-bottom:0;">
+          <div class="sar-title">Opérations <span>archivées</span></div>
+          <div id="sarArchivedList" class="sar-archived-list" style="margin-top:14px;"></div>
+          <div class="sar-operation-actions" style="margin-top:16px;">
+            <button type="button" class="btn btn-secondary" onclick="closeArchivedOperationsModal()">Fermer</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -3387,6 +3391,7 @@ let _opActiveSyncInFlight = false;
 let _opActiveLastPayload = '';
 let _opActiveRetryTimer = null;
 let _inactiveOperationsCache = [];
+let _allowReadOnlyMutation = false;
 const OPERATION_REF_PLACE_CODE = '25';
 
 
@@ -3604,7 +3609,12 @@ function restoreBaliseFromOpActive(savedBalise) {
   syncAllFormats(lat, lon, null);
   const typeSelect = document.getElementById('bearingType');
   if (typeSelect) typeSelect.value = 'BALISE';
-  addBearing();
+  _allowReadOnlyMutation = true;
+  try {
+    addBearing();
+  } finally {
+    _allowReadOnlyMutation = false;
+  }
   if (typeSelect) typeSelect.value = previousType;
   const prevLatNum = parseFloat(previousLat);
   const prevLonNum = parseFloat(previousLon);
@@ -3629,6 +3639,12 @@ function hydrateOperationFromPayload(data, sourceLabel = 'op-active.json', optio
 
   restoreRollcallFromOpActive(data?.rollcall?.stations || []);
   updateStationList();
+  if (readOnly) {
+    stopEditingBlink();
+    if (pickMode) togglePickMode();
+    if (window._pickMarker) { window._pickMarker.remove(); window._pickMarker = null; }
+    if (window._pickBlinkTimer) { clearInterval(window._pickBlinkTimer); window._pickBlinkTimer = null; }
+  }
 
   const modeMsg = readOnly ? ' (vue seule)' : '';
   notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis ${sourceLabel}${modeMsg} ✓`);
@@ -3706,8 +3722,9 @@ function updateOperationControls() {
   const rollcallContainer = document.getElementById('rollcallContainer');
   const releveBtn = document.getElementById('toggleReleveBtn');
   const operationActive = hasActiveOperation();
+  const readOnlyMode = operationActive && isArchivedReadOnlyOperation();
   const operationText = operationActive
-    ? `${getCurrentOperationLabelText(currentSarOperation)}${isArchivedReadOnlyOperation() ? ' · VUE SEULE' : ''}`
+    ? `${getCurrentOperationLabelText(currentSarOperation)}${readOnlyMode ? ' · VUE SEULE' : ''}`
     : '';
 
   setElementDisplay(openBtn, !operationActive);
@@ -3717,7 +3734,10 @@ function updateOperationControls() {
   setElementDisplay(closeBtn, operationActive);
   setElementDisplay(operationLabel, operationActive, 'inline-flex');
   setElementDisplay(rollcallContainer, operationActive, 'inline-flex');
-  setElementDisplay(releveBtn, operationActive && !isArchivedReadOnlyOperation());
+  setElementDisplay(releveBtn, operationActive && !readOnlyMode);
+  if (closeBtn) {
+    closeBtn.textContent = readOnlyMode ? "Sortir de l'operation" : "Cloturer l'operation";
+  }
 
   if (operationLabel) {
     operationLabel.innerHTML = `${operationActive ? operationText : 'Operation : —'}<span class="op-arrow">▾</span>`;
@@ -5461,7 +5481,7 @@ function getCoords() {
 }
 
 function addBearing() {
-  if (isArchivedReadOnlyOperation()) {
+  if (isArchivedReadOnlyOperation() && !_allowReadOnlyMutation) {
     notify('👁 Mode consultation : ajout de relevés indisponible', true);
     return;
   }
@@ -5511,14 +5531,17 @@ function addBearing() {
           Lat : ${lat.toFixed(4)}<br>Lon : ${lon.toFixed(4)}<br>
           ${timestamp.replace('T',' ')}
         </div>
-        <div style="margin-top:8px">
-          <button onclick="removeBaliseMarker(); map.closePopup();"
-            style="width:100%;padding:4px;background:rgba(255,45,85,0.15);
-            border:1px solid #ff2d55;border-radius:4px;color:#ff2d55;
-            font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
-            🗑 Supprimer
-          </button>
-        </div>`)
+        ${isArchivedReadOnlyOperation() ? '' : `
+          <div style="margin-top:8px">
+            <button onclick="removeBaliseMarker(); map.closePopup();"
+              style="width:100%;padding:4px;background:rgba(255,45,85,0.15);
+              border:1px solid #ff2d55;border-radius:4px;color:#ff2d55;
+              font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
+              🗑 Supprimer
+            </button>
+          </div>
+        `}
+      `)
       .addTo(map);
 
     balisMarker.on('dragend', function() {
@@ -5526,14 +5549,17 @@ function addBearing() {
       this.getPopup().setContent(`
         <div class="popup-title" style="color:#ff2d55">✚ BALISE — Position fox</div>
         <div class="popup-meta">Lat : ${p.lat.toFixed(4)}<br>Lon : ${p.lng.toFixed(4)}</div>
-        <div style="margin-top:8px">
-          <button onclick="removeBaliseMarker(); map.closePopup();"
-            style="width:100%;padding:4px;background:rgba(255,45,85,0.15);
-            border:1px solid #ff2d55;border-radius:4px;color:#ff2d55;
-            font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
-            🗑 Supprimer
-          </button>
-        </div>`);
+        ${isArchivedReadOnlyOperation() ? '' : `
+          <div style="margin-top:8px">
+            <button onclick="removeBaliseMarker(); map.closePopup();"
+              style="width:100%;padding:4px;background:rgba(255,45,85,0.15);
+              border:1px solid #ff2d55;border-radius:4px;color:#ff2d55;
+              font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
+              🗑 Supprimer
+            </button>
+          </div>
+        `}
+      `);
       scheduleOpActiveSync('balise-dragged');
     });
 
@@ -5678,18 +5704,21 @@ function addNegMarker(lat, lon, callsign, id, color, timestamp) {
       Lat : ${lat.toFixed(4)}<br>Lon : ${lon.toFixed(4)}<br>
       ${timestamp ? timestamp.replace('T',' ') : ''}
     </div>
-    <div style="margin-top:8px;display:flex;gap:6px;">
-      <button onclick="editNegMarker('${callsign}',${id})" style="flex:1;padding:4px;
-        background:rgba(0,212,255,0.1);border:1px solid var(--accent);border-radius:4px;
-        color:var(--accent);font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
-        ✏️ Éditer
-      </button>
-      <button onclick="removeNegMarker('${callsign}',${id})" style="flex:1;padding:4px;
-        background:rgba(255,45,85,0.15);border:1px solid var(--danger);border-radius:4px;
-        color:var(--danger);font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
-        🗑 Supprimer
-      </button>
-    </div>`;
+    ${isArchivedReadOnlyOperation() ? '' : `
+      <div style="margin-top:8px;display:flex;gap:6px;">
+        <button onclick="editNegMarker('${callsign}',${id})" style="flex:1;padding:4px;
+          background:rgba(0,212,255,0.1);border:1px solid var(--accent);border-radius:4px;
+          color:var(--accent);font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
+          ✏️ Éditer
+        </button>
+        <button onclick="removeNegMarker('${callsign}',${id})" style="flex:1;padding:4px;
+          background:rgba(255,45,85,0.15);border:1px solid var(--danger);border-radius:4px;
+          color:var(--danger);font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;cursor:pointer;">
+          🗑 Supprimer
+        </button>
+      </div>
+    `}
+  `;
 
   const key = `${callsign}_${id}`;
   negMarkers[key] = L.marker([lat, lon], { icon })
@@ -5926,29 +5955,31 @@ function drawBearing(item) {
         ${notes ? 'Note : ' + notes + '<br>' : ''}
         ${fmtTimestamp(item.timestamp) !== '—' ? '⏱ ' + fmtTimestamp(item.timestamp) : ''}
       </div>
-      <div style="display:flex;gap:6px;margin-top:8px;">
-        <button onclick="editBearing(${id})" style="
-          flex:1;padding:5px 0;background:rgba(0,212,255,0.15);
-          border:1px solid var(--accent);border-radius:4px;
-          color:var(--accent);font-family:'Rajdhani',sans-serif;
-          font-weight:700;font-size:12px;letter-spacing:1px;cursor:pointer;">
-          ✏️ ÉDITER
-        </button>
-        <button onclick="toggleBearingVisibility(${id});map.closePopup()" style="
-          flex:1;padding:5px 0;background:rgba(255,107,53,0.12);
-          border:1px solid var(--accent2);border-radius:4px;
-          color:var(--accent2);font-family:'Rajdhani',sans-serif;
-          font-weight:700;font-size:12px;letter-spacing:1px;cursor:pointer;">
-          ${item.hidden ? '👁 AFFICHER' : '◌ MASQUER'}
-        </button>
-        <button onclick="removeBearing(${id});map.closePopup()" style="
-          flex:1;padding:5px 0;background:rgba(255,45,85,0.15);
-          border:1px solid var(--danger);border-radius:4px;
-          color:var(--danger);font-family:'Rajdhani',sans-serif;
-          font-weight:700;font-size:12px;letter-spacing:1px;cursor:pointer;">
-          🗑 SUPPRIMER
-        </button>
-      </div>
+      ${isArchivedReadOnlyOperation() ? '' : `
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <button onclick="editBearing(${id})" style="
+            flex:1;padding:5px 0;background:rgba(0,212,255,0.15);
+            border:1px solid var(--accent);border-radius:4px;
+            color:var(--accent);font-family:'Rajdhani',sans-serif;
+            font-weight:700;font-size:12px;letter-spacing:1px;cursor:pointer;">
+            ✏️ ÉDITER
+          </button>
+          <button onclick="toggleBearingVisibility(${id});map.closePopup()" style="
+            flex:1;padding:5px 0;background:rgba(255,107,53,0.12);
+            border:1px solid var(--accent2);border-radius:4px;
+            color:var(--accent2);font-family:'Rajdhani',sans-serif;
+            font-weight:700;font-size:12px;letter-spacing:1px;cursor:pointer;">
+            ${item.hidden ? '👁 AFFICHER' : '◌ MASQUER'}
+          </button>
+          <button onclick="removeBearing(${id});map.closePopup()" style="
+            flex:1;padding:5px 0;background:rgba(255,45,85,0.15);
+            border:1px solid var(--danger);border-radius:4px;
+            color:var(--danger);font-family:'Rajdhani',sans-serif;
+            font-weight:700;font-size:12px;letter-spacing:1px;cursor:pointer;">
+            🗑 SUPPRIMER
+          </button>
+        </div>
+      `}
     `, { minWidth: 200 })
     .addTo(group);
 
@@ -6273,14 +6304,16 @@ function renderList() {
         </svg>
         ${Math.round(b.bearing)}°
       </div>
-      <div class="bearing-actions">
-        <button class="btn btn-danger" title="Supprimer" onclick="event.stopPropagation();removeBearing(${b.id})">\u2715</button>
-        <button class="btn btn-edit" title="Éditer" onclick="event.stopPropagation();editBearing(${b.id})">&#9998;</button>
-        <button class="btn btn-eye${b.hidden ? ' hidden' : ''}" title="${b.hidden ? 'Réactiver' : 'Masquer'}" onclick="event.stopPropagation();toggleBearingVisibility(${b.id})">${b.hidden
-          ? `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><path d="M1 1L15 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 3.2C7 3.07 7.5 3 8 3c3 0 5.5 2.5 6.5 4-.35.6-.8 1.2-1.35 1.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><path d="M3.3 5.1C2.45 6 1.7 7.1 1.5 7c1 1.5 3.5 4 6.5 4 1.1 0 2.1-.3 3-.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><circle cx="8" cy="7" r="1.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="2 2"/></svg>`
-          : `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`
-        }</button>
-      </div>
+      ${isArchivedReadOnlyOperation() ? '' : `
+        <div class="bearing-actions">
+          <button class="btn btn-danger" title="Supprimer" onclick="event.stopPropagation();removeBearing(${b.id})">\u2715</button>
+          <button class="btn btn-edit" title="Éditer" onclick="event.stopPropagation();editBearing(${b.id})">&#9998;</button>
+          <button class="btn btn-eye${b.hidden ? ' hidden' : ''}" title="${b.hidden ? 'Réactiver' : 'Masquer'}" onclick="event.stopPropagation();toggleBearingVisibility(${b.id})">${b.hidden
+            ? `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><path d="M1 1L15 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 3.2C7 3.07 7.5 3 8 3c3 0 5.5 2.5 6.5 4-.35.6-.8 1.2-1.35 1.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><path d="M3.3 5.1C2.45 6 1.7 7.1 1.5 7c1 1.5 3.5 4 6.5 4 1.1 0 2.1-.3 3-.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><circle cx="8" cy="7" r="1.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="2 2"/></svg>`
+            : `<svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><path d="M1.5 7C2.5 5 5 2 8 2s5.5 3 6.5 5c-1 2-3.5 5-6.5 5S2.5 9 1.5 7z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="7" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>`
+          }</button>
+        </div>
+      `}
     </div>
   `).join('') + negListenings.map(n => `
     <div class="bearing-item" id="nli-${n.id}" style="border-left:3px solid #ff2d55;opacity:0.85;cursor:default;">
@@ -6291,10 +6324,12 @@ function renderList() {
         <div class="bearing-meta" style="color:var(--accent);margin-top:2px">⏱ ${fmtTimestamp(n.timestamp)}</div>
       </div>
       <div class="bearing-angle" style="font-size:22px;line-height:1;">🚫</div>
-      <div class="bearing-actions">
-        <button class="btn btn-edit" title="Éditer" onclick="event.stopPropagation();editNegMarker('${n.callsign}',${n.id})">&#9998;</button>
-        <button class="btn btn-danger" title="Supprimer" onclick="event.stopPropagation();removeNegMarker('${n.callsign}',${n.id})">✕</button>
-      </div>
+      ${isArchivedReadOnlyOperation() ? '' : `
+        <div class="bearing-actions">
+          <button class="btn btn-edit" title="Éditer" onclick="event.stopPropagation();editNegMarker('${n.callsign}',${n.id})">&#9998;</button>
+          <button class="btn btn-danger" title="Supprimer" onclick="event.stopPropagation();removeNegMarker('${n.callsign}',${n.id})">✕</button>
+        </div>
+      `}
     </div>
   `).join('');
 }
