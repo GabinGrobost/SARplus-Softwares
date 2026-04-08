@@ -117,6 +117,6 @@ Consulter le fichier `LICENSE` pour les termes complets.
 
 ---
 
-## Contact
+## 11) Contact
 
 **SWL2506** — ADRASEC 25 (Doubs, Bourgogne-Franche-Comté)
