@@ -2221,7 +2221,7 @@
             </div>
             <div class="form-group">
               <label for="sarOperationRef">REF opération</label>
-              <input type="text" id="sarOperationRef" placeholder="AAMMDDXXXX (ex : 2604250001)" maxlength="10" />
+              <input type="text" id="sarOperationRef" placeholder="AAMMDDXXXX (ex : 2604250001)" maxlength="10" readonly />
             </div>
             <div class="form-group">
               <label for="sarOperationType">Type d'opération</label>
@@ -3799,12 +3799,10 @@ async function loadInactiveOperations() {
   return _inactiveOperationsCache;
 }
 
-function computeNextOperationRef(operationType = '', operations = []) {
+function computeNextOperationRef(_operationType = '', operations = []) {
   const prefix = buildOperationRefPrefix(new Date());
-  const normalizedType = (operationType || '').trim().toLowerCase();
   const refs = operations
     .filter(op => /^\d{10}$/.test((op?.ref || '').trim()))
-    .filter(op => !normalizedType || ((op?.type || '').trim().toLowerCase() === normalizedType))
     .map(op => (op.ref || '').trim())
     .filter(ref => ref.startsWith(prefix));
 
@@ -3820,9 +3818,6 @@ function getKnownOperationsForRefComputation() {
   const known = [];
   if (Array.isArray(_inactiveOperationsCache)) known.push(..._inactiveOperationsCache);
   if (currentSarOperation?.ref) known.push({ ref: currentSarOperation.ref, type: currentSarOperation.type || '' });
-  const formRef = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
-  const formType = document.getElementById('sarOperationType')?.value || '';
-  if (/^\d{10}$/.test(formRef)) known.push({ ref: formRef, type: formType });
   return known;
 }
 
