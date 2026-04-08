@@ -3406,6 +3406,13 @@ function setElementDisplay(element, visible, displayValue = 'inline-flex') {
   element.style.display = visible ? displayValue : 'none';
 }
 
+function getCurrentOperationLabelText(operation) {
+  const isExercise = (operation?.exercise || 'non') === 'oui';
+  const type = (operation?.type || operation?.operationType || 'Opération').trim();
+  const ref = (operation?.ref || operation?.operationRef || '—').trim() || '—';
+  return `${isExercise ? 'Exercice ' : ''}${type} : ${ref}`;
+}
+
 function updateOperationControls() {
   const openBtn = document.getElementById('openOperationBtn');
   const joinBtn = document.getElementById('joinOperationBtn');
@@ -3414,8 +3421,8 @@ function updateOperationControls() {
   const rollcallContainer = document.getElementById('rollcallContainer');
   const releveBtn = document.getElementById('toggleReleveBtn');
   const operationActive = hasActiveOperation();
-  const operationName = operationActive
-    ? (currentSarOperation?.name || currentSarOperation?.operationName || 'Sans nom')
+  const operationText = operationActive
+    ? getCurrentOperationLabelText(currentSarOperation)
     : '';
 
   setElementDisplay(openBtn, !operationActive);
@@ -3427,7 +3434,7 @@ function updateOperationControls() {
 
   if (operationLabel) {
     operationLabel.textContent = operationActive
-      ? `Operation : ${operationName}`
+      ? operationText
       : 'Operation : —';
   }
 
