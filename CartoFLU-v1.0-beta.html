@@ -3302,14 +3302,22 @@ let initialInternetAccessCheckPromise = null;
 let currentSarOperation = null;
 let lastSarOperationMeta = null;
 const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
+const OP_INACTIVE_FILE = 'op-inactive.json';
 const OP_ACTIVE_PENDING_KEY = 'cartoflu.op_active.pending_payload';
 let _opActiveSyncTimer = null;
 let _opActiveSyncInFlight = false;
 let _opActiveLastPayload = '';
 let _opActiveRetryTimer = null;
+let _inactiveOperationsCache = [];
+const OPERATION_REF_PLACE_CODE = '25';
+
 
 function hasActiveOperation() {
   return !!currentSarOperation;
+}
+
+function isArchivedReadOnlyOperation() {
+  return !!(currentSarOperation && currentSarOperation.readOnly === true);
 }
 
 function getSarOperationFormSnapshot() {
@@ -3363,6 +3371,7 @@ function removeBaliseMarker(syncSource = 'balise-removed') {
 }
 
 function buildOpActivePayload(source = 'ui') {
+  if (isArchivedReadOnlyOperation()) return null;
   const operationForm = getSarOperationFormSnapshot();
   const { hasAnyValue, ...operationFormData } = operationForm;
   const operation = currentSarOperation
@@ -3404,6 +3413,7 @@ function buildOpActivePayload(source = 'ui') {
 async function flushOpActiveSync(source = 'ui') {
   if (_opActiveSyncInFlight) return;
   const payload = buildOpActivePayload(source);
+  if (!payload) return;
   const payloadText = JSON.stringify(payload);
   if (payloadText === _opActiveLastPayload) return;
   _opActiveSyncInFlight = true;
@@ -3467,6 +3477,7 @@ async function flushPendingOpActiveSync(source = 'pending-retry') {
 }
 
 function scheduleOpActiveSync(source = 'ui') {
+  if (isArchivedReadOnlyOperation()) return;
   if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
   _opActiveSyncTimer = setTimeout(() => {
     _opActiveSyncTimer = null;
@@ -3524,24 +3535,26 @@ function restoreBaliseFromOpActive(savedBalise) {
   }
 }
 
-function hydrateActiveOperationFromPayload(data, sourceLabel = 'op-active.json') {
-  if (!data?.active || !data?.operation) return false;
+function hydrateOperationFromPayload(data, sourceLabel = 'op-active.json', options = {}) {
+  const { allowInactive = false, readOnly = false } = options;
+  if (!data?.operation) return false;
+  if (!allowInactive && !data?.active) return false;
 
-  currentSarOperation = { ...data.operation };
+  currentSarOperation = { ...data.operation, readOnly };
   lastSarOperationMeta = { ...data.operation };
   updateOperationControls();
 
   const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
   const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
-  if (savedBearings.length || savedNegListenings.length) {
-    restoreBearings(savedBearings, savedNegListenings);
-  }
+  restoreBearings(savedBearings, savedNegListenings);
   restoreBaliseFromOpActive(data?.session?.balise || null);
 
   restoreRollcallFromOpActive(data?.rollcall?.stations || []);
   updateStationList();
-  notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis ${sourceLabel} ✓`);
-  scheduleOpActiveSync('operation-restored');
+
+  const modeMsg = readOnly ? ' (vue seule)' : '';
+  notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis ${sourceLabel}${modeMsg} ✓`);
+  if (!readOnly) scheduleOpActiveSync('operation-restored');
   return true;
 }
 
@@ -3550,14 +3563,14 @@ async function hydrateActiveOperationFromServer() {
     const resp = await fetch('op-active.json', { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    return hydrateActiveOperationFromPayload(data, 'op-active.json');
+    return hydrateOperationFromPayload(data, 'op-active.json');
   } catch (e) {
     console.warn('[CartoFLU] Restauration op-active.json impossible :', e);
     const pendingPayloadText = localStorage.getItem(OP_ACTIVE_PENDING_KEY);
     if (!pendingPayloadText) return false;
     try {
       const pendingData = JSON.parse(pendingPayloadText);
-      return hydrateActiveOperationFromPayload(pendingData, 'sauvegarde locale hors ligne');
+      return hydrateOperationFromPayload(pendingData, 'sauvegarde locale hors ligne');
     } catch (parseErr) {
       console.warn('[CartoFLU] Restauration locale op-active impossible :', parseErr);
       return false;
@@ -3584,7 +3597,7 @@ function isAprsUnavailableInCurrentMode() {
 function applyAprsAvailabilityState() {
   const aprsPanel = document.getElementById('tab-aprs');
   const aprsStatus = document.getElementById('aprsStatus');
-  const disabled = isAprsUnavailableInCurrentMode();
+  const disabled = isAprsUnavailableInCurrentMode() || isArchivedReadOnlyOperation();
   const controlIds = ['aprsApiKey', 'aprsRefresh', 'aprsShowTrail', 'aprsTimerange', 'aprsFetchBtn', 'aprsStopBtn'];
 
   if (aprsPanel) aprsPanel.classList.toggle('aprs-disabled', disabled);
@@ -3615,7 +3628,7 @@ function updateOperationControls() {
   const releveBtn = document.getElementById('toggleReleveBtn');
   const operationActive = hasActiveOperation();
   const operationText = operationActive
-    ? getCurrentOperationLabelText(currentSarOperation)
+    ? `${getCurrentOperationLabelText(currentSarOperation)}${isArchivedReadOnlyOperation() ? ' · VUE SEULE' : ''}`
     : '';
 
   setElementDisplay(openBtn, !operationActive);
@@ -3766,13 +3779,63 @@ function updateOpeningAuthorityUi() {
   label.textContent = getOpeningAuthorityLabel(sizingValue);
 }
 
+function buildOperationRefPrefix(date = new Date()) {
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  return `${yy}${mm}${OPERATION_REF_PLACE_CODE}`;
+}
+
+async function loadInactiveOperations() {
+  try {
+    const resp = await fetch(OP_INACTIVE_FILE, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const operations = Array.isArray(data?.operations) ? data.operations : [];
+    _inactiveOperationsCache = operations.filter(op => /^\d{10}$/.test((op?.ref || '').trim()));
+  } catch (e) {
+    _inactiveOperationsCache = [];
+    console.warn('[CartoFLU] Lecture op-inactive.json impossible :', e);
+  }
+  return _inactiveOperationsCache;
+}
+
+function computeNextOperationRef(operationType = '', operations = []) {
+  const prefix = buildOperationRefPrefix(new Date());
+  const normalizedType = (operationType || '').trim().toLowerCase();
+  const refs = operations
+    .filter(op => /^\d{10}$/.test((op?.ref || '').trim()))
+    .filter(op => !normalizedType || ((op?.type || '').trim().toLowerCase() === normalizedType))
+    .map(op => (op.ref || '').trim())
+    .filter(ref => ref.startsWith(prefix));
+
+  const maxSeq = refs.reduce((max, ref) => {
+    const seq = Number.parseInt(ref.slice(6), 10);
+    return Number.isFinite(seq) ? Math.max(max, seq) : max;
+  }, 0);
+
+  return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+}
+
+function getKnownOperationsForRefComputation() {
+  const known = [];
+  if (Array.isArray(_inactiveOperationsCache)) known.push(..._inactiveOperationsCache);
+  if (currentSarOperation?.ref) known.push({ ref: currentSarOperation.ref, type: currentSarOperation.type || '' });
+  const formRef = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
+  const formType = document.getElementById('sarOperationType')?.value || '';
+  if (/^\d{10}$/.test(formRef)) known.push({ ref: formRef, type: formType });
+  return known;
+}
+
+function refreshOperationRefFromType() {
+  const refInput = document.getElementById('sarOperationRef');
+  if (!refInput) return;
+  const type = document.getElementById('sarOperationType')?.value || '';
+  const nextRef = computeNextOperationRef(type, getKnownOperationsForRefComputation());
+  refInput.value = nextRef;
+}
+
 function buildDefaultOperationRef() {
-  const now = new Date();
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = '25';
-  const seq = '0001';
-  return `${yy}${mm}${dd}${seq}`;
+  return computeNextOperationRef('', getKnownOperationsForRefComputation());
 }
 
 function updateSarOperationModeUi(mode) {
@@ -3790,11 +3853,13 @@ function updateSarOperationModeUi(mode) {
   }
 }
 
-function openSarOperationOverlay(mode = 'connected') {
+async function openSarOperationOverlay(mode = 'connected') {
   closePcMenu();
   closeSarOfflineModal();
   updateSarOperationModeUi(mode);
+  await loadInactiveOperations();
   resetSarOperationForm();
+  refreshOperationRefFromType();
   const overlay = document.getElementById('sarOperationOverlay');
   if (!overlay) return;
   overlay.classList.add('open');
@@ -3907,7 +3972,7 @@ async function openOperation() {
     lastInternetAccessStatus = !!online;
     if (online) {
       notify('Accès internet détecté ✓');
-      openSarOperationOverlay('connected');
+      await openSarOperationOverlay('connected');
     } else {
       notify('⚠ Accès internet indisponible', true);
       await switchToOfflineBasemap(currentBasemapKey);
@@ -3924,7 +3989,43 @@ async function openOperation() {
   }
 }
 
-function joinOperation() {
+async function openArchivedOperationByRef(ref) {
+  const normalizedRef = (ref || '').trim().toUpperCase();
+  if (!/^\d{10}$/.test(normalizedRef)) return false;
+  try {
+    const resp = await fetch(OP_INACTIVE_FILE, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const operations = Array.isArray(data?.operations) ? data.operations : [];
+    const archived = operations.find(op => (op?.ref || '').trim().toUpperCase() === normalizedRef);
+    if (!archived) return false;
+    const snapshot = (archived && typeof archived.snapshot === 'object' && archived.snapshot)
+      ? archived.snapshot
+      : {
+          active: false,
+          operation: {
+            name: archived?.name || `Opération ${normalizedRef}`,
+            ref: normalizedRef,
+            type: archived?.type || 'Opération archivée',
+            exercise: archived?.exercise || 'non',
+            sizing: archived?.sizing || '',
+            openingAuthority: archived?.openingAuthority || 'non',
+            openingAuthorityLabel: archived?.openingAuthorityLabel || '',
+            mode: 'archived-readonly',
+            closedAt: archived?.closedAt || null
+          },
+          rollcall: archived?.rollcall || { stations: [] },
+          session: archived?.session || { bearings: [], negListenings: [], balise: null, intersection: null }
+        };
+
+    return hydrateOperationFromPayload(snapshot, `archive ${normalizedRef}`, { allowInactive: true, readOnly: true });
+  } catch (e) {
+    console.warn('[CartoFLU] Ouverture archive impossible :', e);
+    return false;
+  }
+}
+
+async function joinOperation() {
   if (maintenanceMode) {
     notify('🛠 Mode maintenance actif : rejointure d’opération indisponible', true);
     return;
@@ -3937,6 +4038,12 @@ function joinOperation() {
   const name = enteredName.trim();
   if (!name) {
     notify("⚠ Renseignez le nom de l'opération à rejoindre", true);
+    return;
+  }
+
+  const reopenedArchive = await openArchivedOperationByRef(name);
+  if (reopenedArchive) {
+    updateOperationControls();
     return;
   }
 
@@ -3958,12 +4065,13 @@ function joinOperation() {
   scheduleOpActiveSync('operation-joined');
 }
 
-function closeOperation() {
+async function closeOperation() {
   if (!hasActiveOperation()) {
     updateOperationControls();
     return;
   }
 
+  const wasArchivedReadOnly = isArchivedReadOnlyOperation();
   const operationName = currentSarOperation?.name || 'sans nom';
   lastSarOperationMeta = {
     ...(currentSarOperation || {}),
@@ -3977,7 +4085,10 @@ function closeOperation() {
   closeMapContextMenu();
   updateOperationControls();
   notify(`🗂 Opération ${operationName} cloturée ✓`);
+  if (wasArchivedReadOnly) return;
   scheduleOpActiveSync('operation-closed');
+  await flushOpActiveSync('operation-closed-immediate');
+  await loadInactiveOperations();
 }
 
 function customOperationAction() {
@@ -7363,6 +7474,14 @@ if (sarOperationRefInput) {
   el.addEventListener('input', () => scheduleOpActiveSync('operation-form-updated'));
   el.addEventListener('change', () => scheduleOpActiveSync('operation-form-updated'));
 });
+
+const sarOperationTypeSelect = document.getElementById('sarOperationType');
+if (sarOperationTypeSelect) {
+  sarOperationTypeSelect.addEventListener('change', () => {
+    refreshOperationRefFromType();
+    scheduleOpActiveSync('operation-form-updated');
+  });
+}
 
 document.getElementById('sarSizing')?.addEventListener('change', () => {
   updateOpeningAuthorityUi();
