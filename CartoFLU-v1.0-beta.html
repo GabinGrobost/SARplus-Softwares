@@ -2195,9 +2195,24 @@
               </div>
               <input type="hidden" id="sarExercise" value="non" />
             </div>
-            <div class="form-group full">
+            <div class="form-group">
               <label for="sarSizing">Dimensionnement</label>
-              <input type="text" id="sarSizing" placeholder="ex : 2 équipes, 1 PC radio, 1 mobile" />
+              <select id="sarSizing">
+                <option value="">Sélectionner…</option>
+                <option value="Départemental">Départemental</option>
+                <option value="Zonal">Zonal</option>
+                <option value="National">National</option>
+                <option value="Européen">Européen</option>
+                <option value="International">International</option>
+              </select>
+            </div>
+            <div class="form-group" id="sarOpeningAuthorityGroup" style="display:none;">
+              <label id="sarOpeningAuthorityLabel">Ouverture COD ?</label>
+              <div class="sar-toggle-row" id="sarOpeningAuthorityToggle">
+                <button type="button" class="sar-toggle-btn active" onclick="setSarToggleValue('sarOpeningAuthority','non', this)">Non</button>
+                <button type="button" class="sar-toggle-btn" onclick="setSarToggleValue('sarOpeningAuthority','oui', this)">Oui</button>
+              </div>
+              <input type="hidden" id="sarOpeningAuthority" value="non" />
             </div>
           </div>
           <div id="sarOperationNote" class="hint-box sar-operation-note">
@@ -3118,9 +3133,11 @@ function getSarOperationFormSnapshot() {
   const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
   const type = document.getElementById('sarOperationType')?.value || '';
   const exercise = document.getElementById('sarExercise')?.value || 'non';
-  const sizing = document.getElementById('sarSizing')?.value.trim() || '';
+  const sizing = document.getElementById('sarSizing')?.value || '';
+  const openingAuthority = document.getElementById('sarOpeningAuthority')?.value || 'non';
+  const openingAuthorityLabel = getOpeningAuthorityLabel(sizing);
   const hasAnyValue = !!(name || ref || type || sizing);
-  return { hasAnyValue, name, ref, type, exercise, sizing };
+  return { hasAnyValue, name, ref, type, exercise, sizing, openingAuthority, openingAuthorityLabel };
 }
 
 function getRollcallStationsSnapshot() {
@@ -3182,7 +3199,9 @@ function buildOpActivePayload(source = 'ui') {
       ref: operationFormData.ref,
       type: operationFormData.type,
       exercise: operationFormData.exercise,
-      sizing: operationFormData.sizing
+      sizing: operationFormData.sizing,
+      openingAuthority: operationFormData.openingAuthority,
+      openingAuthorityLabel: operationFormData.openingAuthorityLabel
     },
     rollcall: getRollcallStationsSnapshot(),
     session: {
@@ -3405,14 +3424,51 @@ function resetSarOperationForm() {
   const type = document.getElementById('sarOperationType');
   const sizing = document.getElementById('sarSizing');
   const exercise = document.getElementById('sarExercise');
+  const openingAuthority = document.getElementById('sarOpeningAuthority');
   if (name) name.value = '';
   if (ref) ref.value = buildDefaultOperationRef();
   if (type) type.value = '';
   if (sizing) sizing.value = '';
   if (exercise) exercise.value = 'non';
+  if (openingAuthority) openingAuthority.value = 'non';
   document.querySelectorAll('#sarExerciseToggle .sar-toggle-btn').forEach((btn, index) => {
     btn.classList.toggle('active', index === 0);
   });
+  document.querySelectorAll('#sarOpeningAuthorityToggle .sar-toggle-btn').forEach((btn, index) => {
+    btn.classList.toggle('active', index === 0);
+  });
+  updateOpeningAuthorityUi();
+}
+
+function getOpeningAuthorityLabel(sizingValue = '') {
+  const labelMap = {
+    'Départemental': 'Ouverture COD ?',
+    'Zonal': 'Ouverture COZ ?',
+    'National': 'Ouverture COGIC ?',
+    'Européen': 'Ouverture CDCS ?',
+    'International': 'Ouverture CDCS ?'
+  };
+  return labelMap[sizingValue] || 'Ouverture COD ?';
+}
+
+function updateOpeningAuthorityUi() {
+  const sizingValue = document.getElementById('sarSizing')?.value || '';
+  const group = document.getElementById('sarOpeningAuthorityGroup');
+  const label = document.getElementById('sarOpeningAuthorityLabel');
+  const openingAuthority = document.getElementById('sarOpeningAuthority');
+  if (!group || !label || !openingAuthority) return;
+
+  if (!sizingValue) {
+    group.style.display = 'none';
+    openingAuthority.value = 'non';
+    document.querySelectorAll('#sarOpeningAuthorityToggle .sar-toggle-btn').forEach((btn, index) => {
+      btn.classList.toggle('active', index === 0);
+    });
+    return;
+  }
+
+  group.style.display = '';
+  label.textContent = getOpeningAuthorityLabel(sizingValue);
 }
 
 function buildDefaultOperationRef() {
@@ -3497,7 +3553,9 @@ function submitSarOperation() {
   const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
   const type = document.getElementById('sarOperationType')?.value || '';
   const exercise = document.getElementById('sarExercise')?.value || 'non';
-  const sizing = document.getElementById('sarSizing')?.value.trim() || '';
+  const sizing = document.getElementById('sarSizing')?.value || '';
+  const openingAuthority = document.getElementById('sarOpeningAuthority')?.value || 'non';
+  const openingAuthorityLabel = getOpeningAuthorityLabel(sizing);
 
   if (!name) {
     notify('⚠ Renseignez le nom de l\'opération', true);
@@ -3521,6 +3579,8 @@ function submitSarOperation() {
     type,
     exercise,
     sizing,
+    openingAuthority,
+    openingAuthorityLabel,
     mode: sarOperationMode,
     createdAt: new Date().toISOString()
   };
@@ -3588,6 +3648,8 @@ function joinOperation() {
     type: 'Operation rejointe',
     exercise: 'non',
     sizing: '',
+    openingAuthority: 'non',
+    openingAuthorityLabel: '',
     mode: 'joined',
     joined: true,
     joinedAt: new Date().toISOString()
@@ -6984,12 +7046,18 @@ if (sarOperationRefInput) {
   });
 }
 
-['sarOperationName', 'sarOperationType', 'sarExercise', 'sarSizing'].forEach(id => {
+['sarOperationName', 'sarOperationType', 'sarExercise', 'sarSizing', 'sarOpeningAuthority'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('input', () => scheduleOpActiveSync('operation-form-updated'));
   el.addEventListener('change', () => scheduleOpActiveSync('operation-form-updated'));
 });
+
+document.getElementById('sarSizing')?.addEventListener('change', () => {
+  updateOpeningAuthorityUi();
+});
+
+updateOpeningAuthorityUi();
 
 
 </script>
