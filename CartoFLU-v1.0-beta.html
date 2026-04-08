@@ -2988,6 +2988,7 @@ async function loadRuntimeConfig() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await hydrateActiveOperationFromServer();
   await loadRuntimeConfig();
   applyRuntimeConfig();
   refreshBasemapSelectOptions();
@@ -2997,7 +2998,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateOperationControls();
   onCallsignInput(document.getElementById('callsign')?.value || '');
   await loadMemberListFromUrl();
-  await hydrateActiveOperationFromServer();
   await flushPendingOpActiveSync('startup');
 });
 
