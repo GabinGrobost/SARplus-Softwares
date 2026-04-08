@@ -145,6 +145,44 @@
   .header-op-btn:active {
     transform: translateY(1px);
   }
+  .operation-menu-btn {
+    position: relative;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+  }
+  #currentOperationLabel {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+    opacity: 1 !important;
+    gap: 8px;
+  }
+  #currentOperationLabel .op-arrow {
+    font-size: 12px;
+    opacity: 0.9;
+  }
+  #currentOperationLabel.open .op-arrow {
+    transform: rotate(180deg);
+  }
+  #currentOperationDropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    display: none;
+    min-width: 100%;
+    background: rgba(12,14,28,0.98);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.45), 0 0 10px rgba(0,212,255,0.12);
+    z-index: 1200;
+    padding: 6px;
+  }
+  #currentOperationDropdown.open { display: block; }
+  #currentOperationDropdown #closeOperationBtn {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
 
   .uncertainty-sector {
     fill: url(#uncertaintyHatchPattern) !important;
@@ -1632,8 +1670,15 @@
   <nav class="header-ops" aria-label="Menu des opérations">
     <button class="header-op-btn" id="openOperationBtn" type="button" onclick="openOperation()">Ouvrir une operation</button>
     <button class="header-op-btn" id="joinOperationBtn" type="button" onclick="joinOperation()">Rejoindre une operation</button>
-    <div class="header-op-btn" id="currentOperationLabel" style="display:none; cursor:default; pointer-events:none; opacity:0.9;" aria-disabled="true">Operation : —</div>
-    <button class="header-op-btn" id="closeOperationBtn" type="button" onclick="closeOperation()" style="display:none;">Cloturer l'operation</button>
+    <div class="operation-menu-btn" id="currentOperationMenu" style="display:none;">
+      <button class="header-op-btn" id="currentOperationLabel" type="button" onclick="toggleCurrentOperationMenu(event)" aria-expanded="false">
+        Operation : —
+        <span class="op-arrow">▾</span>
+      </button>
+      <div id="currentOperationDropdown">
+        <button class="header-op-btn" id="closeOperationBtn" type="button" onclick="closeOperation()">Cloturer l'operation</button>
+      </div>
+    </div>
     <div class="rollcall-btn" id="rollcallContainer" style="display:none;">
     <div id="rollcallToggle" class="header-op-btn" onclick="toggleRollcall()">
       📋 APPEL
@@ -3420,6 +3465,8 @@ function updateOperationControls() {
   const joinBtn = document.getElementById('joinOperationBtn');
   const closeBtn = document.getElementById('closeOperationBtn');
   const operationLabel = document.getElementById('currentOperationLabel');
+  const operationMenu = document.getElementById('currentOperationMenu');
+  const operationDropdown = document.getElementById('currentOperationDropdown');
   const rollcallContainer = document.getElementById('rollcallContainer');
   const releveBtn = document.getElementById('toggleReleveBtn');
   const operationActive = hasActiveOperation();
@@ -3429,18 +3476,20 @@ function updateOperationControls() {
 
   setElementDisplay(openBtn, !operationActive);
   setElementDisplay(joinBtn, !operationActive);
+  setElementDisplay(operationMenu, operationActive, 'inline-flex');
   setElementDisplay(closeBtn, operationActive);
-  setElementDisplay(operationLabel, operationActive);
+  setElementDisplay(operationLabel, operationActive, 'inline-flex');
   setElementDisplay(rollcallContainer, operationActive, 'inline-flex');
   setElementDisplay(releveBtn, operationActive);
 
   if (operationLabel) {
-    operationLabel.textContent = operationActive
-      ? operationText
-      : 'Operation : —';
+    operationLabel.innerHTML = `${operationActive ? operationText : 'Operation : —'}<span class="op-arrow">▾</span>`;
+    operationLabel.setAttribute('aria-expanded', 'false');
   }
 
   if (!operationActive) {
+    operationDropdown?.classList.remove('open');
+    operationLabel?.classList.remove('open');
     document.getElementById('rollcallDropdown')?.classList.remove('open');
     document.getElementById('rollcallToggle')?.classList.remove('open');
     closeMapContextMenu();
@@ -3676,6 +3725,7 @@ function submitSarOperation() {
 
   closeSarOperationOverlay();
   updateOperationControls();
+  showRollcallReminderBanner();
   notify(`📂 Opération ${name} ouverte en ${sarOperationMode === 'degraded' ? 'mode dégradé' : 'mode connecté'} ✓`);
   scheduleOpActiveSync('operation-opened');
 }
@@ -3798,10 +3848,29 @@ function toggleRollcall() {
   if (!btn || !dd) return;
   const open = dd.classList.toggle('open');
   btn.classList.toggle('open', open);
+  document.getElementById('currentOperationDropdown')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
+  closePcMenu();
+}
+
+function toggleCurrentOperationMenu(event) {
+  event?.stopPropagation();
+  const btn = document.getElementById('currentOperationLabel');
+  const dd = document.getElementById('currentOperationDropdown');
+  if (!btn || !dd || !hasActiveOperation()) return;
+  const open = dd.classList.toggle('open');
+  btn.classList.toggle('open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   closePcMenu();
 }
 
 document.addEventListener('click', e => {
+  if (!e.target.closest('.operation-menu-btn')) {
+    document.getElementById('currentOperationDropdown')?.classList.remove('open');
+    document.getElementById('currentOperationLabel')?.classList.remove('open');
+    document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
+  }
   if (!e.target.closest('.rollcall-btn')) {
     document.getElementById('rollcallDropdown')?.classList.remove('open');
     document.getElementById('rollcallToggle')?.classList.remove('open');
@@ -3816,6 +3885,9 @@ function togglePcMenu() {
   const dd  = document.getElementById('pcMenuDropdown');
   const open = dd.classList.toggle('open');
   btn.classList.toggle('open', open);
+  document.getElementById('currentOperationDropdown')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.classList.remove('open');
+  document.getElementById('currentOperationLabel')?.setAttribute('aria-expanded', 'false');
   document.getElementById('rollcallDropdown')?.classList.remove('open');
   document.getElementById('rollcallToggle')?.classList.remove('open');
 }
@@ -5120,7 +5192,6 @@ function addBearing() {
 
   drawBearing(item);
   renderList();
-  switchTab('list');
   // Stopper le clignotement et supprimer l'ancien tracé en édition
   stopEditingBlink();
   window._editingOriginal = null;
@@ -5134,6 +5205,7 @@ function addBearing() {
   document.getElementById('notes').value = '';
   document.getElementById('bearing').value = '';
   clearBearingPreview();
+  if (sidebarVisible) toggleSidebar();
   writeSaveFile(true);
   scheduleOpActiveSync('bearing-added');
 }
@@ -6873,10 +6945,9 @@ function clearAprsMarkers() {
   aprsMarkers = {}; aprsTrails = {}; aprsHistory = {};
 }
 
-// Charger la clé sauvegardée au démarrage
-window.addEventListener('load', () => {
-  loadAprsKey();
-  setTimeout(() => { tryAutoStartAprs(); }, 400);
+function showRollcallReminderBanner() {
+  const existingBanner = document.getElementById('welcomeBannerAppel');
+  if (existingBanner) existingBanner.remove();
   const bannerAppel = document.createElement('div');
   bannerAppel.id = 'welcomeBannerAppel';
   bannerAppel.style.cssText = `
@@ -6894,6 +6965,12 @@ window.addEventListener('load', () => {
       border-radius:4px;font-size:12px;cursor:pointer;">✕</button>
   `;
   document.body.appendChild(bannerAppel);
+}
+
+// Charger la clé sauvegardée au démarrage
+window.addEventListener('load', () => {
+  loadAprsKey();
+  setTimeout(() => { tryAutoStartAprs(); }, 400);
 });
 
 // ─── SAUVEGARDE FICHIER (File System Access API) ──────────────────────────────
