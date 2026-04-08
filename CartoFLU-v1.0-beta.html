@@ -2523,9 +2523,64 @@ const BASEMAPS = {
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
 const IGN_HASH_PROTECTED_BASEMAPS = new Set(['ignscan25', 'ignmaps', 'ignscan100', 'ignscanoaci', 'ignscan25tour']);
+const OFFLINE_DEFAULT_BASEMAP_KEY = 'ignplan';
 let currentBasemapKey = 'osmorg';
 let lastInternetAccessStatus = null;
 const localBasemapAutoInitAsked = new Set();
+let _basemapSelectOptionsCache = null;
+
+function isOfflineBasemapMode() {
+  return runtimeConfig.forceOffline || navigator.onLine === false || lastInternetAccessStatus === false;
+}
+
+function cacheBasemapSelectOptions() {
+  const select = document.getElementById('basemapSelect');
+  if (!select || _basemapSelectOptionsCache) return;
+  _basemapSelectOptionsCache = Array.from(select.options).map(opt => ({
+    value: opt.value,
+    text: opt.textContent
+  }));
+}
+
+function refreshBasemapSelectOptions() {
+  const select = document.getElementById('basemapSelect');
+  if (!select) return;
+  cacheBasemapSelectOptions();
+  const offlineMode = isOfflineBasemapMode();
+  const allOptions = _basemapSelectOptionsCache || [];
+  const visibleOptions = offlineMode
+    ? allOptions.filter(opt => !!resolveOfflineBasemap(opt.value))
+    : allOptions;
+
+  select.innerHTML = '';
+  visibleOptions.forEach(opt => {
+    const node = document.createElement('option');
+    node.value = opt.value;
+    node.textContent = opt.text;
+    select.appendChild(node);
+  });
+
+  if (!visibleOptions.length) {
+    allOptions.forEach(opt => {
+      const node = document.createElement('option');
+      node.value = opt.value;
+      node.textContent = opt.text;
+      select.appendChild(node);
+    });
+  }
+
+  const currentExists = Array.from(select.options).some(opt => opt.value === currentBasemapKey);
+  if (currentExists) {
+    select.value = currentBasemapKey;
+    return;
+  }
+  const fallbackKey = offlineMode
+    ? findOfflineBasemapKey(OFFLINE_DEFAULT_BASEMAP_KEY)
+    : (select.options[0]?.value || currentBasemapKey);
+  if (fallbackKey && Array.from(select.options).some(opt => opt.value === fallbackKey)) {
+    select.value = fallbackKey;
+  }
+}
 
 function promptIgnScan25ApiKey(force = false) {
   const fromConfig = (runtimeConfig.ignScan25HashKey || '').trim();
@@ -2580,6 +2635,7 @@ function resolveOfflineBasemap(key) {
 }
 
 function findOfflineBasemapKey(preferredKey = currentBasemapKey) {
+  if (resolveOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY)) return OFFLINE_DEFAULT_BASEMAP_KEY;
   if (resolveOfflineBasemap(preferredKey)) return preferredKey;
   const select = document.getElementById('basemapSelect');
   const selectKeys = select ? Array.from(select.options).map(opt => opt.value) : [];
@@ -2594,6 +2650,7 @@ function findOfflineBasemapKey(preferredKey = currentBasemapKey) {
 
 async function switchToOfflineBasemap(preferredKey = currentBasemapKey, opts = {}) {
   const silent = !!opts.silent;
+  refreshBasemapSelectOptions();
   const fallbackKey = findOfflineBasemapKey(preferredKey);
   if (!fallbackKey) {
     if (!silent) notify('⚠ Aucun fond de carte local disponible pour bascule hors ligne', true);
@@ -2768,6 +2825,7 @@ let currentTileLayer = createBasemapLayer(resolveBasemap('osmorg') || BASEMAPS.o
 async function changeBasemap(key) {
   ensureLocalBasemapPrepared(key);
   const shouldUseOfflineBasemap = runtimeConfig.forceOffline || navigator.onLine === false || lastInternetAccessStatus === false;
+  refreshBasemapSelectOptions();
   const offlineCandidate = shouldUseOfflineBasemap ? resolveOfflineBasemap(key) : null;
   const resolved = offlineCandidate || resolveBasemap(key);
   if (!resolved) {
@@ -2943,6 +3001,7 @@ async function loadRuntimeConfig() {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadRuntimeConfig();
   applyRuntimeConfig();
+  refreshBasemapSelectOptions();
   await startInitialInternetAccessCheck();
   updateSidebarToggleButton();
   updateStationList();
@@ -3627,18 +3686,31 @@ function startInitialInternetAccessCheck() {
   initialInternetAccessCheckPromise = hasInternetAccess()
     .then(async online => {
       lastInternetAccessStatus = !!online;
+      refreshBasemapSelectOptions();
       if (!lastInternetAccessStatus) {
-        await switchToOfflineBasemap(currentBasemapKey, { silent: true });
+        await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
       }
       return lastInternetAccessStatus;
     })
     .catch(async () => {
       lastInternetAccessStatus = false;
-      await switchToOfflineBasemap(currentBasemapKey, { silent: true });
+      refreshBasemapSelectOptions();
+      await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
       return false;
     });
   return initialInternetAccessCheckPromise;
 }
+
+window.addEventListener('offline', async () => {
+  lastInternetAccessStatus = false;
+  refreshBasemapSelectOptions();
+  await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
+});
+
+window.addEventListener('online', () => {
+  lastInternetAccessStatus = true;
+  refreshBasemapSelectOptions();
+});
 
 function resetSarOperationForm() {
   const name = document.getElementById('sarOperationName');
