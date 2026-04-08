@@ -1705,17 +1705,7 @@
           </select>
         </div>
       </div>
-      <!-- Bouton chargement liste -->
       <div style="padding:6px 14px 2px;display:flex;gap:6px;align-items:center;">
-        <button onclick="loadCallsignFile()" title="Recharger le fichier member-list.json"
-          style="flex:1;background:rgba(0,212,255,0.08);border:1px solid var(--accent);
-                 border-radius:4px;color:var(--accent);font-family:'Share Tech Mono',monospace;
-                 font-size:10px;letter-spacing:1px;padding:4px 8px;cursor:pointer;
-                 text-transform:uppercase;transition:background .2s;"
-          onmouseover="this.style.background='rgba(0,212,255,0.18)'"
-          onmouseout="this.style.background='rgba(0,212,255,0.08)'">
-          📂 Recharger members .json
-        </button>
         <span id="rcFileStatus" style="font-family:'Share Tech Mono',monospace;font-size:9px;
               color:var(--muted);white-space:nowrap;">member-list.json non chargé</span>
       </div>
@@ -2120,7 +2110,6 @@
           <option value="ignscan100">IGN SCAN 100</option>
           <option value="ignscanoaci">IGN SCAN OACI</option>
           <option value="ignscan25tour">IGN SCAN 25 Tour</option>
-          <option value="ignscan25">IGN SCAN 25</option>
         </select>
       </div>
     </div>
@@ -2308,6 +2297,7 @@ const map = L.map('map', {
   zoomControl: false
 });
 L.svg().addTo(map);
+map.attributionControl.setPrefix('<a href="https://gnl-solution.fr" target="_blank" rel="noopener noreferrer">🇫🇷 Made in GNL</a>');
 
 // Force Leaflet to recalculate dimensions once layout is stable
 setTimeout(() => map.invalidateSize(), 100);
@@ -2499,20 +2489,6 @@ const BASEMAPS = {
     attribution: '© IGN - Géoplateforme',
     maxZoom: 19
   },
-  ignscan25: {
-    label: 'IGN SCAN 25',
-    type: 'wms',
-    restricted: true,
-    url: 'https://data.geopf.fr/private/wms-r/',
-    options: {
-      layers: 'GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN25TOUR',
-      format: 'image/png',
-      transparent: false,
-      version: '1.3.0'
-    },
-    attribution: '© IGN - Géoplateforme',
-    maxZoom: 19
-  },
   satellite: {
     label: 'Esri World Imagery',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -2522,7 +2498,7 @@ const BASEMAPS = {
 };
 
 const IGN_SCAN25_APIKEY_STORAGE = 'cartoflu_ign_scan25_apikey';
-const IGN_HASH_PROTECTED_BASEMAPS = new Set(['ignscan25', 'ignmaps', 'ignscan100', 'ignscanoaci', 'ignscan25tour']);
+const IGN_HASH_PROTECTED_BASEMAPS = new Set(['ignmaps', 'ignscan100', 'ignscanoaci', 'ignscan25tour']);
 const OFFLINE_DEFAULT_BASEMAP_KEY = 'ignplan';
 let currentBasemapKey = 'osmorg';
 let lastInternetAccessStatus = null;
@@ -2588,7 +2564,7 @@ function promptIgnScan25ApiKey(force = false) {
   if (existing && !force) return existing;
 
   const entered = window.prompt(
-    "Les fonds IGN protégés (SCAN 25 / SCAN 25 TOUR / SCAN 100 / SCAN OACI / Cartes) nécessitent une clé HASH cartes.gouv.fr.\nCollez votre clé pour activer ces fonds :",
+    "Les fonds IGN protégés (SCAN 25 TOUR / SCAN 100 / SCAN OACI / Cartes) nécessitent une clé HASH cartes.gouv.fr.\nCollez votre clé pour activer ces fonds :",
     existing
   );
 
@@ -2810,10 +2786,10 @@ function createBasemapLayer(bm, key = '') {
     layer = L.tileLayer(bm.url, commonOptions);
   }
 
-  if (key === 'ignscan25') {
+  if (IGN_HASH_PROTECTED_BASEMAPS.has(key)) {
     layer.once('tileerror', () => {
       localStorage.removeItem(IGN_SCAN25_APIKEY_STORAGE);
-      notify('⚠ IGN SCAN 25 : accès refusé ou clé HASH invalide', true);
+      notify('⚠ Fond IGN protégé : accès refusé ou clé HASH invalide', true);
     });
   }
 
@@ -2844,6 +2820,7 @@ async function changeBasemap(key) {
 }
 
 const zoomControl = L.control.zoom({ position: 'topleft' }).addTo(map);
+L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 120 }).addTo(map);
 
 const mapToolbar = document.querySelector('.map-toolbar');
 const zoomContainer = zoomControl.getContainer();
@@ -3535,32 +3512,44 @@ function restoreBaliseFromOpActive(savedBalise) {
   }
 }
 
+function hydrateActiveOperationFromPayload(data, sourceLabel = 'op-active.json') {
+  if (!data?.active || !data?.operation) return false;
+
+  currentSarOperation = { ...data.operation };
+  lastSarOperationMeta = { ...data.operation };
+  updateOperationControls();
+
+  const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
+  const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
+  if (savedBearings.length || savedNegListenings.length) {
+    restoreBearings(savedBearings, savedNegListenings);
+  }
+  restoreBaliseFromOpActive(data?.session?.balise || null);
+
+  restoreRollcallFromOpActive(data?.rollcall?.stations || []);
+  updateStationList();
+  notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis ${sourceLabel} ✓`);
+  scheduleOpActiveSync('operation-restored');
+  return true;
+}
+
 async function hydrateActiveOperationFromServer() {
   try {
     const resp = await fetch('op-active.json', { cache: 'no-store' });
-    if (!resp.ok) return false;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    if (!data?.active || !data?.operation) return false;
-
-    currentSarOperation = { ...data.operation };
-    lastSarOperationMeta = { ...data.operation };
-    updateOperationControls();
-
-    const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
-    const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
-    if (savedBearings.length || savedNegListenings.length) {
-      restoreBearings(savedBearings, savedNegListenings);
-    }
-    restoreBaliseFromOpActive(data?.session?.balise || null);
-
-    restoreRollcallFromOpActive(data?.rollcall?.stations || []);
-    updateStationList();
-    notify(`📂 Opération ${currentSarOperation?.name || 'sans nom'} restaurée depuis op-active.json ✓`);
-    scheduleOpActiveSync('operation-restored');
-    return true;
+    return hydrateActiveOperationFromPayload(data, 'op-active.json');
   } catch (e) {
     console.warn('[CartoFLU] Restauration op-active.json impossible :', e);
-    return false;
+    const pendingPayloadText = localStorage.getItem(OP_ACTIVE_PENDING_KEY);
+    if (!pendingPayloadText) return false;
+    try {
+      const pendingData = JSON.parse(pendingPayloadText);
+      return hydrateActiveOperationFromPayload(pendingData, 'sauvegarde locale hors ligne');
+    } catch (parseErr) {
+      console.warn('[CartoFLU] Restauration locale op-active impossible :', parseErr);
+      return false;
+    }
   }
 }
 
