@@ -128,6 +128,33 @@ try {
         $inactiveData['operations'] = $operations;
 
         writeJsonAtomic($inactiveTarget, $inactiveData);
+
+        $resetPayload = [
+            'version' => 1,
+            'kind' => 'op-active',
+            'app' => 'CartoFLU',
+            'active' => false,
+            'updatedAt' => null,
+            'operation' => null,
+            'rollcall' => [
+                'totalStations' => 0,
+                'presentCount' => 0,
+                'presentCallsigns' => [],
+                'stations' => []
+            ],
+            'session' => [
+                'bearings' => [],
+                'negListenings' => [],
+                'balise' => null,
+                'intersection' => null
+            ],
+            'sync' => [
+                'source' => 'server-init',
+                'path' => '/'
+            ]
+        ];
+
+        writeJsonAtomic($activeTarget, $resetPayload);
     }
 } catch (Throwable $e) {
     http_response_code(500);
