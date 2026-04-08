@@ -1224,6 +1224,13 @@
   .aprs-age { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--muted); }
   .aprs-meta { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--muted); margin-top:3px; line-height:1.6; }
   .aprs-actions { display:flex; gap:5px; margin-top:6px; }
+  #tab-aprs.aprs-disabled {
+    opacity: 0.55;
+    filter: grayscale(0.35);
+  }
+  #tab-aprs.aprs-disabled .form-section {
+    border-color: rgba(255,255,255,0.08);
+  }
   .spinner { display:inline-block;width:10px;height:10px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
 
@@ -2058,7 +2065,7 @@
           L'API APRS.fi utilisée ici retourne la dernière position (<code>what=loc</code>). Le tracé se construit à chaque rafraîchissement.
         </div>
         <div style="display:flex;gap:6px;margin-top:6px">
-          <button class="btn btn-primary" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
+          <button class="btn btn-primary" id="aprsFetchBtn" style="flex:1" onclick="fetchAprs()">📡 INTERROGER</button>
           <button class="btn btn-secondary" onclick="stopAprs()" id="aprsStopBtn" style="display:none">⏹ Stop</button>
         </div>
       </div>
@@ -2943,6 +2950,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   onCallsignInput(document.getElementById('callsign')?.value || '');
   await loadMemberListFromUrl();
   await hydrateActiveOperationFromServer();
+  await flushPendingOpActiveSync('startup');
 });
 
 function normalizeCallsign(raw) {
@@ -3246,9 +3254,11 @@ let initialInternetAccessCheckPromise = null;
 let currentSarOperation = null;
 let lastSarOperationMeta = null;
 const OP_ACTIVE_ENDPOINT = 'save-op-active.php';
+const OP_ACTIVE_PENDING_KEY = 'cartoflu.op_active.pending_payload';
 let _opActiveSyncTimer = null;
 let _opActiveSyncInFlight = false;
 let _opActiveLastPayload = '';
+let _opActiveRetryTimer = null;
 
 function hasActiveOperation() {
   return !!currentSarOperation;
@@ -3358,8 +3368,51 @@ async function flushOpActiveSync(source = 'ui') {
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     _opActiveLastPayload = payloadText;
+    localStorage.removeItem(OP_ACTIVE_PENDING_KEY);
+    if (_opActiveRetryTimer) {
+      clearTimeout(_opActiveRetryTimer);
+      _opActiveRetryTimer = null;
+    }
   } catch (e) {
+    localStorage.setItem(OP_ACTIVE_PENDING_KEY, payloadText);
+    if (!_opActiveRetryTimer) {
+      _opActiveRetryTimer = setTimeout(() => {
+        _opActiveRetryTimer = null;
+        flushOpActiveSync('retry-after-failure');
+      }, 3000);
+    }
     console.warn('[CartoFLU] Sync op-active.json impossible :', e);
+  } finally {
+    _opActiveSyncInFlight = false;
+  }
+}
+
+async function flushPendingOpActiveSync(source = 'pending-retry') {
+  const pendingPayloadText = localStorage.getItem(OP_ACTIVE_PENDING_KEY);
+  if (!pendingPayloadText || _opActiveSyncInFlight) return;
+  _opActiveSyncInFlight = true;
+  try {
+    const resp = await fetch(OP_ACTIVE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: pendingPayloadText,
+      keepalive: true
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    _opActiveLastPayload = pendingPayloadText;
+    localStorage.removeItem(OP_ACTIVE_PENDING_KEY);
+    if (_opActiveRetryTimer) {
+      clearTimeout(_opActiveRetryTimer);
+      _opActiveRetryTimer = null;
+    }
+  } catch (e) {
+    if (!_opActiveRetryTimer) {
+      _opActiveRetryTimer = setTimeout(() => {
+        _opActiveRetryTimer = null;
+        flushPendingOpActiveSync('pending-retry-timer');
+      }, 3000);
+    }
+    console.warn(`[CartoFLU] Reprise sync op-active.json (${source}) impossible :`, e);
   } finally {
     _opActiveSyncInFlight = false;
   }
@@ -3376,6 +3429,10 @@ function scheduleOpActiveSync(source = 'ui') {
 window.addEventListener('beforeunload', () => {
   if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
   flushOpActiveSync('beforeunload');
+});
+
+window.addEventListener('online', () => {
+  flushPendingOpActiveSync('browser-online');
 });
 
 function restoreRollcallFromOpActive(stations = []) {
@@ -3460,6 +3517,33 @@ function getCurrentOperationLabelText(operation) {
   return `${isExercise ? 'Exercice ' : ''}${type} : ${ref}`;
 }
 
+function isAprsUnavailableInCurrentMode() {
+  return !!(currentSarOperation && currentSarOperation.mode === 'degraded');
+}
+
+function applyAprsAvailabilityState() {
+  const aprsPanel = document.getElementById('tab-aprs');
+  const aprsStatus = document.getElementById('aprsStatus');
+  const disabled = isAprsUnavailableInCurrentMode();
+  const controlIds = ['aprsApiKey', 'aprsRefresh', 'aprsShowTrail', 'aprsTimerange', 'aprsFetchBtn', 'aprsStopBtn'];
+
+  if (aprsPanel) aprsPanel.classList.toggle('aprs-disabled', disabled);
+  controlIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+
+  if (disabled) {
+    stopAprs(false);
+    clearAprsMarkers();
+    if (aprsStatus) {
+      aprsStatus.innerHTML = `<span style="color:var(--accent2)">⚠ Service APRS indisponible en mode dégradé (hors ligne)</span>`;
+    }
+  } else if (aprsStatus && !aprsStatus.textContent.trim()) {
+    aprsStatus.textContent = "En attente d'interrogation…";
+  }
+}
+
 function updateOperationControls() {
   const openBtn = document.getElementById('openOperationBtn');
   const joinBtn = document.getElementById('joinOperationBtn');
@@ -3494,6 +3578,7 @@ function updateOperationControls() {
     document.getElementById('rollcallToggle')?.classList.remove('open');
     closeMapContextMenu();
   }
+  applyAprsAvailabilityState();
 }
 
 function setOpenOperationBusy(isBusy) {
@@ -3728,6 +3813,7 @@ function submitSarOperation() {
   showRollcallReminderBanner();
   notify(`📂 Opération ${name} ouverte en ${sarOperationMode === 'degraded' ? 'mode dégradé' : 'mode connecté'} ✓`);
   scheduleOpActiveSync('operation-opened');
+  flushOpActiveSync('operation-opened-immediate');
 }
 
 async function openOperation() {
@@ -6473,6 +6559,7 @@ async function persistAprsKeyToConfig(key) {
 }
 
 function onAprsApiKeyInput() {
+  if (isAprsUnavailableInCurrentMode()) return;
   if (_aprsKeySaveTimer) clearTimeout(_aprsKeySaveTimer);
   _aprsKeySaveTimer = setTimeout(async () => {
     const key = document.getElementById('aprsApiKey')?.value.trim() || '';
@@ -6498,6 +6585,7 @@ function loadAprsKey() {
 }
 
 async function tryAutoStartAprs() {
+  if (isAprsUnavailableInCurrentMode()) return;
   if (!aprsAutoStartRequested || aprsTimer) return;
   const apiKey = document.getElementById('aprsApiKey')?.value.trim();
   const callsigns = getAprsTrackedBaseCallsigns();
@@ -6524,6 +6612,10 @@ function qrkToWeight(qrk) {
 }
 
 async function fetchAprs() {
+  if (isAprsUnavailableInCurrentMode()) {
+    notify('⚠ APRS indisponible en mode dégradé (hors ligne)', true);
+    return;
+  }
   const apiKey     = document.getElementById('aprsApiKey').value.trim();
   const callsigns  = getAprsTrackedBaseCallsigns();
   const refreshSec = parseInt(document.getElementById('aprsRefresh').value);
