@@ -1677,6 +1677,13 @@
     padding-right: 4px;
   }
 
+  .sar-archived-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
   .sar-archived-row {
     display: flex;
     align-items: center;
@@ -1723,6 +1730,20 @@
     align-items: center;
     justify-content: center;
     font-size: 17px;
+  }
+
+  .sar-archived-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sar-archived-export-btn {
+    width: auto;
+    height: 34px;
+    margin-top: 0;
+    padding: 0 10px;
+    font-size: 12px;
   }
 
   .sar-archived-empty {
@@ -2375,11 +2396,11 @@
     <div class="sar-operation-body">
       <div class="sar-operation-card">
         <div class="form-section" style="margin-bottom:0;">
-          <div class="sar-title">// Opérations <span>archivées</span></div>
-          <div id="sarArchivedList" class="sar-archived-list" style="margin-top:14px;"></div>
-          <div class="sar-operation-actions" style="margin-top:16px;">
-            <button type="button" class="btn btn-secondary" onclick="closeArchivedOperationsModal()">Fermer</button>
+          <div class="sar-archived-head">
+            <div class="sar-title">// Opérations <span>archivées</span></div>
+            <button type="button" class="btn btn-secondary" style="width:auto;margin-top:0;" onclick="closeArchivedOperationsModal()">Fermer</button>
           </div>
+          <div id="sarArchivedList" class="sar-archived-list" style="margin-top:14px;"></div>
         </div>
       </div>
     </div>
@@ -4080,7 +4101,10 @@ async function openArchivedOperationsModal() {
           <div class="sar-archived-name">${safeName}</div>
         </div>
         <div class="sar-archived-meta">clôturée le ${formatArchiveDate(closedAt)}</div>
-        <button type="button" class="btn btn-secondary sar-archived-open-btn" title="Ouvrir en mode consultation" onclick="openArchivedOperationFromModal('${ref}')">👁</button>
+        <div class="sar-archived-actions">
+          <button type="button" class="btn btn-secondary sar-archived-export-btn" title="Exporter les relevés de l'archive au format CSV" onclick="exportArchivedOperationCsv('${ref}')">📥 Exporter CSV</button>
+          <button type="button" class="btn btn-secondary sar-archived-open-btn" title="Ouvrir en mode consultation" onclick="openArchivedOperationFromModal('${ref}')">👁</button>
+        </div>
       </div>`;
     }).join('');
   } catch (e) {
@@ -4197,6 +4221,59 @@ async function openOperation() {
   } finally {
     sarOperationCheckInFlight = false;
     setOpenOperationBusy(false);
+  }
+}
+
+async function exportArchivedOperationCsv(ref) {
+  const normalizedRef = (ref || '').trim().toUpperCase();
+  if (!/^\d{10}$/.test(normalizedRef)) {
+    notify('⚠ Référence archive invalide', true);
+    return;
+  }
+
+  try {
+    const resp = await fetch(OP_INACTIVE_FILE, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const operations = Array.isArray(data?.operations) ? data.operations : [];
+    const archived = operations.find(op => (op?.ref || '').trim().toUpperCase() === normalizedRef);
+    if (!archived) {
+      notify('⚠ Archive introuvable', true);
+      return;
+    }
+
+    const snapshot = (archived && typeof archived.snapshot === 'object' && archived.snapshot) ? archived.snapshot : null;
+    const rowsSource = Array.isArray(snapshot?.session?.bearings)
+      ? snapshot.session.bearings
+      : (Array.isArray(archived?.session?.bearings) ? archived.session.bearings : []);
+
+    const header = 'id,callsign,frequency,lat,lon,bearing,uncertainty,lineLength,color,notes';
+    const rows = rowsSource.map((b, idx) => {
+      const notes = String(b?.notes ?? '').replace(/"/g, '""');
+      return [
+        b?.id ?? idx + 1,
+        b?.callsign ?? '',
+        b?.frequency ?? '',
+        b?.lat ?? '',
+        b?.lon ?? '',
+        b?.bearing ?? '',
+        b?.uncertainty ?? '',
+        b?.lineLength ?? '',
+        b?.color ?? '',
+        `"${notes}"`
+      ].join(',');
+    });
+
+    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `radiogonio_releves_archive_${normalizedRef}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    notify(`📥 Archive ${normalizedRef} exportée en CSV ✓`);
+  } catch (e) {
+    console.warn('[CartoFLU] Export CSV archive impossible :', e);
+    notify('⚠ Export CSV impossible pour cette archive', true);
   }
 }
 
