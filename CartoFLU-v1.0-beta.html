@@ -145,17 +145,6 @@
   .header-op-btn:active {
     transform: translateY(1px);
   }
-  .leaflet-control-scale {
-    margin-right: 84px !important;
-    margin-bottom: 6px !important;
-  }
-  .leaflet-control-scale-line {
-    background: transparent !important;
-    border: 1px solid var(--accent) !important;
-    color: var(--accent) !important;
-    text-shadow: none !important;
-    box-shadow: none !important;
-  }
   .operation-menu-btn {
     position: relative;
     flex-shrink: 0;
@@ -1716,6 +1705,10 @@
           </select>
         </div>
       </div>
+      <div style="padding:6px 14px 2px;display:flex;gap:6px;align-items:center;">
+        <span id="rcFileStatus" style="font-family:'Share Tech Mono',monospace;font-size:9px;
+              color:var(--muted);white-space:nowrap;">member-list.json non chargé</span>
+      </div>
       <!-- Zone stations dynamiques (chargées depuis le fichier) -->
       <div id="rc-station-list" style="margin-top:2px;"></div>
       <div class="rc-divider"></div>
@@ -2827,7 +2820,7 @@ async function changeBasemap(key) {
 }
 
 const zoomControl = L.control.zoom({ position: 'topleft' }).addTo(map);
-L.control.scale({ position: 'bottomright', metric: true, imperial: false, maxWidth: 120 }).addTo(map);
+L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 120 }).addTo(map);
 
 const mapToolbar = document.querySelector('.map-toolbar');
 const zoomContainer = zoomControl.getContainer();
@@ -4267,6 +4260,11 @@ function loadMemberListData(data, filename = 'member-list.json') {
 
   if (!callsigns.length) {
     notify('⚠ Aucun indicatif trouvé dans member-list.json', true);
+    const status = document.getElementById('rcFileStatus');
+    if (status) {
+      status.textContent = 'member-list.json invalide';
+      status.style.color = 'var(--danger)';
+    }
     return false;
   }
 
@@ -4279,6 +4277,12 @@ function loadMemberListData(data, filename = 'member-list.json') {
 
   callsigns.forEach(cs => rollcallEnsureUnchecked(cs));
 
+  const status = document.getElementById('rcFileStatus');
+  if (status) {
+    status.textContent = filename || 'member-list.json';
+    status.style.color = 'var(--green)';
+  }
+
   notify(`📋 ${callsigns.length} station(s) chargée(s) depuis ${filename} ✓`);
   return true;
 }
@@ -4290,6 +4294,14 @@ async function loadMemberListFromUrl(url = 'member-list.json') {
     const data = await resp.json();
     return loadMemberListData(data, url.split('/').pop() || 'member-list.json');
   } catch (e) {
+    const status = document.getElementById('rcFileStatus');
+    if (status) {
+      const isFileProtocol = location.protocol === 'file:';
+      status.textContent = isFileProtocol
+        ? 'auto-chargement bloqué en file://'
+        : 'member-list.json introuvable';
+      status.style.color = 'var(--muted)';
+    }
     return false;
   }
 }
