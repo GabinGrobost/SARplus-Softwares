@@ -1554,6 +1554,19 @@
     padding: 18px;
   }
 
+  #sarArchivedModal .sar-operation-body {
+    padding: 0;
+    display: block;
+  }
+
+  #sarArchivedModal .sar-operation-card {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 18px;
+  }
+
   .sar-operation-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1696,9 +1709,9 @@
   }
 
   .sar-archived-meta {
-    margin-top: 2px;
     font-size: 12px;
     color: rgba(200,220,232,0.7);
+    white-space: nowrap;
   }
 
   .sar-archived-open-btn {
@@ -4057,15 +4070,16 @@ async function openArchivedOperationsModal() {
       const ref = (op?.ref || '').trim().toUpperCase();
       const name = op?.name || `Opération ${ref}`;
       const type = op?.type || 'Type non renseigné';
+      const exercise = (op?.exercise || op?.snapshot?.operation?.exercise || 'non').toString().trim().toLowerCase();
       const closedAt = op?.closedAt || op?.snapshot?.operation?.closedAt || null;
-      const safeName = escapeHtml(name);
-      const safeType = escapeHtml(type);
+      const nameLabel = `${exercise === 'oui' ? 'Exercice ' : ''}${type} · ${name}`;
+      const safeName = escapeHtml(nameLabel);
       return `<div class="sar-archived-row">
         <div class="sar-archived-main">
           <div class="sar-archived-ref">${ref}</div>
           <div class="sar-archived-name">${safeName}</div>
-          <div class="sar-archived-meta">${safeType} · clôturée le ${formatArchiveDate(closedAt)}</div>
         </div>
+        <div class="sar-archived-meta">clôturée le ${formatArchiveDate(closedAt)}</div>
         <button type="button" class="btn btn-secondary sar-archived-open-btn" title="Ouvrir en mode consultation" onclick="openArchivedOperationFromModal('${ref}')">👁</button>
       </div>`;
     }).join('');
