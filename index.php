@@ -4299,7 +4299,7 @@ function buildTemplateReplacements(rowsSource, operation = {}, presentCallsigns 
     : '';
 
   replacements['[REF]'] = normalizePlaceholderValue(operation?.ref);
-  replacements['[entity-name]'] = normalizePlaceholderValue(operation?.name);
+  replacements['[entity-name]'] = normalizePlaceholderValue(runtimeConfig?.entityName || operation?.name);
   replacements['[H;DEBUT]'] = formatTime(dateStart);
   replacements['[H;FIN]'] = formatTime(dateEnd);
   replacements['[EXERCICE_CASE_A_COCHE]'] = safeExercise ? 'X' : '';
