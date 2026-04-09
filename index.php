@@ -68,7 +68,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(180deg, #22252b 0%, #1f2126 100%);
+    background: rgba(0,0,0,0.10);
+    backdrop-filter: blur(0.5px);
     transition: opacity .45s ease, visibility .45s ease;
   }
   #initialSplash.hidden {
@@ -77,33 +78,100 @@
     pointer-events: none;
   }
   .initial-splash-content {
-    width: min(92vw, 1080px);
+    position: relative;
+    width: min(40vw, 1020px);
+    min-height: min(1vw, 520px);
     color: #ececec;
-    padding: 24px 18px;
-    font-family: 'Rajdhani', sans-serif;
+    padding: clamp(24px, 3.2vw, 42px);
+    font-family: 'Segoeuithisz', monospace;;
+    background: rgba(21, 21, 23, 0.96);
+    box-shadow: 0 18px 38px rgba(0,0,0,0.34);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
   }
   .initial-splash-title {
-    font-size: clamp(64px, 12vw, 190px);
-    line-height: 0.95;
+    font-size: clamp(48px, 10vw, 106px);
+    line-height: 0.9;
     font-style: italic;
     font-weight: 700;
-    letter-spacing: 1px;
-    color: #d9d9dc;
-    text-shadow: 0 6px 16px rgba(0,0,0,0.32);
+    letter-spacing: 0.5px;
+    color: #dddddf;
+    text-shadow: 0 4px 10px rgba(0,0,0,0.22);
+  }
+  .initial-splash-title + .initial-splash-title {
+    margin-top: clamp(8px, 1.3vw, 16px);
   }
   .initial-splash-plus {
     color: #ff6b35;
     display: inline-block;
+    margin-left: clamp(6px, 1vw, 12px);
     transform: translateY(2px);
   }
+  .initial-splash-footer {
+    margin-top: auto;
+    padding-top: clamp(18px, 3vw, 34px);
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+  }
   .initial-splash-sub {
-    margin-top: 6px;
-    font-size: clamp(24px, 4.8vw, 58px);
+    font-size: clamp(22px, 2.2vw, 38px);
     line-height: 1;
     font-style: italic;
     font-weight: 700;
     color: #f1f1f1;
-    letter-spacing: 1.2px;
+    letter-spacing: 1px;
+  }
+  .initial-splash-loading {
+    font-size: clamp(24px, 2.7vw, 14px);
+    line-height: 1;
+    font-style: italic;
+    /*! font-weight: 00; */
+    color: #f1f1f1;
+    letter-spacing: 0.5px;
+    text-align: right;
+  }
+
+  @media (max-width: 760px) {
+    .initial-splash-content {
+      width: min(92vw, 760px);
+      min-height: 280px;
+      padding: 22px 20px;
+    }
+    .initial-splash-title {
+      font-size: clamp(52px, 13vw, 92px);
+    }
+    .initial-splash-footer {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .initial-splash-loading {
+      align-self: flex-end;
+      text-align: right;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .initial-splash-content {
+      width: min(92vw, 760px);
+      min-height: 280px;
+      padding: 22px 20px;
+    }
+    .initial-splash-title {
+      font-size: clamp(52px, 13vw, 92px);
+    }
+    .initial-splash-footer {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .initial-splash-loading {
+      align-self: flex-end;
+      text-align: right;
+    }
   }
 
   /* HEADER */
@@ -1826,7 +1894,10 @@
   <div class="initial-splash-content">
     <div class="initial-splash-title">Search And</div>
     <div class="initial-splash-title">Rescue <span class="initial-splash-plus">+</span></div>
-    <div class="initial-splash-sub">BETA EDITION v1.0</div>
+    <div class="initial-splash-footer">
+      <div class="initial-splash-sub">BETA EDITION v1.0</div>
+      <div class="initial-splash-loading">Chargement...</div>
+    </div>
   </div>
 </div>
 
