@@ -30,6 +30,7 @@
 <title>SAR+ — ADRASEC 25</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap');
 
@@ -2102,7 +2103,7 @@
       <div class="form-section">
         <h3>// Export</h3>
         <button class="btn btn-secondary" style="width:100%;margin-bottom:6px" onclick="exportJSON()">📥 Exporter JSON</button>
-        <button class="btn btn-secondary" style="width:100%" onclick="exportCSV()">📥 Exporter CSV</button>
+        <button class="btn btn-secondary" style="width:100%" onclick="exportXLSX()">📥 Exporter XLSX</button>
       </div>
 
       <div class="form-section">
@@ -4102,7 +4103,7 @@ async function openArchivedOperationsModal() {
         </div>
         <div class="sar-archived-meta">clôturée le ${formatArchiveDate(closedAt)}</div>
         <div class="sar-archived-actions">
-          <button type="button" class="btn btn-secondary sar-archived-export-btn" title="Exporter les relevés de l'archive au format CSV" onclick="exportArchivedOperationCsv('${ref}')">📥 Exporter CSV</button>
+          <button type="button" class="btn btn-secondary sar-archived-export-btn" title="Exporter les relevés de l'archive au format XLSX" onclick="exportArchivedOperationXlsx('${ref}')">📥 Exporter XLSX</button>
           <button type="button" class="btn btn-secondary sar-archived-open-btn" title="Ouvrir en mode consultation" onclick="openArchivedOperationFromModal('${ref}')">👁</button>
         </div>
       </div>`;
@@ -4224,7 +4225,124 @@ async function openOperation() {
   }
 }
 
-async function exportArchivedOperationCsv(ref) {
+function getSafeOperationTypeFolder(operationType = '') {
+  return String(operationType || '').trim();
+}
+
+function normalizePlaceholderValue(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  return String(value);
+}
+
+function buildTemplateReplacements(rowsSource, operation = {}, presentCallsigns = [], opts = {}) {
+  const replacements = {};
+  const safePresent = Array.isArray(presentCallsigns) ? presentCallsigns.map(cs => normalizePlaceholderValue(cs)) : [];
+  const safeExercise = normalizePlaceholderValue(operation?.exercise).toLowerCase() === 'oui';
+  const dateStart = operation?.createdAt ? new Date(operation.createdAt) : null;
+  const dateEnd = opts?.closedAt ? new Date(opts.closedAt) : null;
+  const formatTime = dt => (dt && !Number.isNaN(dt.getTime()))
+    ? `${String(dt.getHours()).padStart(2, '0')}h${String(dt.getMinutes()).padStart(2, '0')}`
+    : '';
+
+  replacements['[REF]'] = normalizePlaceholderValue(operation?.ref);
+  replacements['[entity-name]'] = normalizePlaceholderValue(operation?.name);
+  replacements['[H;DEBUT]'] = formatTime(dateStart);
+  replacements['[H;FIN]'] = formatTime(dateEnd);
+  replacements['[EXERCICE_CASE_A_COCHE]'] = safeExercise ? 'X' : '';
+  replacements['[PAS_EXERCICE_CASE_A_COCHE]'] = safeExercise ? '' : 'X';
+
+  for (let i = 0; i < 20; i += 1) {
+    replacements[`[INDICATIF_PRESENT_${i + 1}]`] = safePresent[i] || '';
+  }
+
+  for (let i = 0; i < 40; i += 1) {
+    const row = rowsSource?.[i] || {};
+    const index = i + 1;
+    const lat = Number(row?.lat);
+    const lon = Number(row?.lon);
+    const locator = Number.isFinite(lat) && Number.isFinite(lon) ? latLonToMaidenhead(lat, lon) : '';
+    replacements[`[RELEVE_${index}_EQ]`] = normalizePlaceholderValue(row?.callsign);
+    replacements[`[RELEVE_${index}_AZIMUT]`] = normalizePlaceholderValue(row?.bearing);
+    replacements[`[RELEVE_${index}_LAT]`] = normalizePlaceholderValue(row?.lat);
+    replacements[`[RELEVE_${index}_LONG]`] = normalizePlaceholderValue(row?.lon);
+    replacements[`[RELEVE_${index}_LOCATOR]`] = normalizePlaceholderValue(locator);
+    replacements[`[RELEVE_${index}_QRK]`] = normalizePlaceholderValue(row?.frequency);
+    replacements[`[RELEVE_${index}_ADRESSE]`] = normalizePlaceholderValue(row?.address || row?.adresse || '');
+    replacements[`[RELEVE_${index}_NOTE]`] = normalizePlaceholderValue(row?.notes);
+  }
+
+  return replacements;
+}
+
+function applyTemplateReplacements(workbook, replacements = {}) {
+  workbook.SheetNames.forEach(name => {
+    const ws = workbook.Sheets[name];
+    if (!ws || !ws['!ref']) return;
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    for (let r = range.s.r; r <= range.e.r; r += 1) {
+      for (let c = range.s.c; c <= range.e.c; c += 1) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        const cell = ws[cellRef];
+        if (!cell || typeof cell.v !== 'string' || !cell.v.includes('[')) continue;
+        let replaced = cell.v;
+        Object.entries(replacements).forEach(([token, value]) => {
+          if (replaced.includes(token)) replaced = replaced.split(token).join(value);
+        });
+        if (replaced !== cell.v) cell.v = replaced;
+      }
+    }
+  });
+}
+
+async function exportRowsAsXlsx(rowsSource, fileName, sheetName = 'Releves', opts = {}) {
+  if (typeof XLSX === 'undefined') {
+    throw new Error('XLSX library unavailable');
+  }
+  const operationType = getSafeOperationTypeFolder(opts?.operation?.type);
+  if (operationType) {
+    try {
+      const templateUrl = `model/${encodeURIComponent(operationType)}/LOG_RELEVES.xlsx`;
+      const templateResp = await fetch(templateUrl, { cache: 'no-store' });
+      if (templateResp.ok) {
+        const buf = await templateResp.arrayBuffer();
+        const templateWb = XLSX.read(buf, { type: 'array' });
+        const replacements = buildTemplateReplacements(
+          rowsSource,
+          opts?.operation || {},
+          opts?.presentCallsigns || [],
+          { closedAt: opts?.closedAt || null }
+        );
+        applyTemplateReplacements(templateWb, replacements);
+        XLSX.writeFile(templateWb, fileName);
+        return;
+      }
+    } catch (err) {
+      console.warn('[CartoFLU] Modèle XLSX indisponible, fallback export standard :', err);
+    }
+  }
+
+  const rows = rowsSource.map((b, idx) => ({
+    id: b?.id ?? idx + 1,
+    callsign: b?.callsign ?? '',
+    frequency: b?.frequency ?? '',
+    lat: b?.lat ?? '',
+    lon: b?.lon ?? '',
+    bearing: b?.bearing ?? '',
+    uncertainty: b?.uncertainty ?? '',
+    lineLength: b?.lineLength ?? '',
+    color: b?.color ?? '',
+    notes: b?.notes ?? ''
+  }));
+  const worksheet = XLSX.utils.json_to_sheet(rows, {
+    header: ['id', 'callsign', 'frequency', 'lat', 'lon', 'bearing', 'uncertainty', 'lineLength', 'color', 'notes']
+  });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  XLSX.writeFile(workbook, fileName);
+}
+
+async function exportArchivedOperationXlsx(ref) {
   const normalizedRef = (ref || '').trim().toUpperCase();
   if (!/^\d{10}$/.test(normalizedRef)) {
     notify('⚠ Référence archive invalide', true);
@@ -4246,34 +4364,25 @@ async function exportArchivedOperationCsv(ref) {
     const rowsSource = Array.isArray(snapshot?.session?.bearings)
       ? snapshot.session.bearings
       : (Array.isArray(archived?.session?.bearings) ? archived.session.bearings : []);
+    const presentCallsigns = Array.isArray(snapshot?.rollcall?.presentCallsigns)
+      ? snapshot.rollcall.presentCallsigns
+      : (Array.isArray(archived?.rollcall?.presentCallsigns) ? archived.rollcall.presentCallsigns : []);
 
-    const header = 'id,callsign,frequency,lat,lon,bearing,uncertainty,lineLength,color,notes';
-    const rows = rowsSource.map((b, idx) => {
-      const notes = String(b?.notes ?? '').replace(/"/g, '""');
-      return [
-        b?.id ?? idx + 1,
-        b?.callsign ?? '',
-        b?.frequency ?? '',
-        b?.lat ?? '',
-        b?.lon ?? '',
-        b?.bearing ?? '',
-        b?.uncertainty ?? '',
-        b?.lineLength ?? '',
-        b?.color ?? '',
-        `"${notes}"`
-      ].join(',');
+    await exportRowsAsXlsx(rowsSource, `radiogonio_releves_archive_${normalizedRef}.xlsx`, `Archive_${normalizedRef}`, {
+      operation: {
+        ref: normalizedRef,
+        name: archived?.name || '',
+        type: archived?.type || snapshot?.operation?.type || '',
+        exercise: archived?.exercise || snapshot?.operation?.exercise || 'non',
+        createdAt: archived?.createdAt || snapshot?.operation?.createdAt || null
+      },
+      presentCallsigns,
+      closedAt: archived?.closedAt || snapshot?.operation?.closedAt || null
     });
-
-    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `radiogonio_releves_archive_${normalizedRef}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    notify(`📥 Archive ${normalizedRef} exportée en CSV ✓`);
+    notify(`📥 Archive ${normalizedRef} exportée en XLSX ✓`);
   } catch (e) {
-    console.warn('[CartoFLU] Export CSV archive impossible :', e);
-    notify('⚠ Export CSV impossible pour cette archive', true);
+    console.warn('[CartoFLU] Export XLSX archive impossible :', e);
+    notify('⚠ Export XLSX impossible pour cette archive', true);
   }
 }
 
@@ -7726,14 +7835,17 @@ function importJSON(event) {
   reader.readAsText(file);
 }
 
-function exportCSV() {
-  const header = 'id,callsign,frequency,lat,lon,bearing,uncertainty,lineLength,color,notes';
-  const rows = bearings.map(b =>
-    [b.id,b.callsign,b.frequency,b.lat,b.lon,b.bearing,b.uncertainty,b.lineLength,b.color,`"${b.notes}"`].join(',')
-  );
-  const blob = new Blob([[header,...rows].join('\n')], {type:'text/csv'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = 'radiogonio_releves.csv'; a.click();
+async function exportXLSX() {
+  try {
+    const rollcall = getRollcallStationsSnapshot();
+    await exportRowsAsXlsx(bearings, 'radiogonio_releves.xlsx', 'Releves', {
+      operation: currentSarOperation || {},
+      presentCallsigns: rollcall?.presentCallsigns || []
+    });
+  } catch (e) {
+    console.warn('[CartoFLU] Export XLSX impossible :', e);
+    notify('⚠ Export XLSX impossible', true);
+  }
 }
 
 // ─── DEMO ─────────────────────────────────────────────────────────────────────
