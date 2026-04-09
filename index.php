@@ -89,6 +89,7 @@
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
+    overflow: hidden;
   }
   .initial-splash-title {
     font-size: clamp(48px, 10vw, 106px);
@@ -132,6 +133,20 @@
     color: #f1f1f1;
     letter-spacing: 0.5px;
     text-align: right;
+  }
+  .initial-splash-progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 6px;
+    background: rgba(255,255,255,0.12);
+  }
+  .initial-splash-progress-bar {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, #ff6b35 0%, #ffd166 100%);
+    transition: width .18s linear;
   }
 
   @media (max-width: 760px) {
@@ -1897,6 +1912,9 @@
     <div class="initial-splash-footer">
       <div class="initial-splash-sub">BETA EDITION v1.0</div>
       <div class="initial-splash-loading">Chargement...</div>
+    </div>
+    <div class="initial-splash-progress" aria-hidden="true">
+      <div class="initial-splash-progress-bar" id="initialSplashProgressBar"></div>
     </div>
   </div>
 </div>
@@ -8028,9 +8046,21 @@ document.getElementById('sarSizing')?.addEventListener('change', () => {
 updateOpeningAuthorityUi();
 
 const _initialSplashStartedAt = Date.now();
+const _initialSplashProgressBar = document.getElementById('initialSplashProgressBar');
+let _initialSplashProgress = 0;
+if (_initialSplashProgressBar) {
+  const tickSplashProgress = () => {
+    _initialSplashProgress = Math.min(92, _initialSplashProgress + (100 - _initialSplashProgress) * 0.06 + 0.35);
+    _initialSplashProgressBar.style.width = `${Math.min(92, _initialSplashProgress)}%`;
+    if (_initialSplashProgress < 92) requestAnimationFrame(tickSplashProgress);
+  };
+  requestAnimationFrame(tickSplashProgress);
+}
+
 window.addEventListener('load', () => {
   const splash = document.getElementById('initialSplash');
   if (!splash) return;
+  if (_initialSplashProgressBar) _initialSplashProgressBar.style.width = '100%';
   const minDisplayMs = 1100;
   const elapsed = Date.now() - _initialSplashStartedAt;
   const delay = Math.max(0, minDisplayMs - elapsed);
