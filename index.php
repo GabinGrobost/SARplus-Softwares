@@ -2551,10 +2551,19 @@
 
 <script>
 // ─── MAP INIT ─────────────────────────────────────────────────────────────────
+const MIN_MAP_ZOOM = 2;
+const WORLD_BOUNDS = L.latLngBounds(
+  L.latLng(-85.05112878, -180),
+  L.latLng(85.05112878, 180)
+);
+
 const map = L.map('map', {
   center: [46.5, 2.5],
   zoom: 6,
-  zoomControl: false
+  zoomControl: false,
+  minZoom: MIN_MAP_ZOOM,
+  maxBounds: WORLD_BOUNDS,
+  maxBoundsViscosity: 1.0
 });
 L.svg().addTo(map);
 map.attributionControl.setPrefix('<a href="https://gnl-solution.fr" target="_blank" rel="noopener noreferrer">🇫🇷 Made in GNL</a>');
@@ -3032,8 +3041,9 @@ async function ensureLocalBasemapPrepared(key) {
 function createBasemapLayer(bm, key = '') {
   const commonOptions = {
     attribution: bm.attribution,
-    minZoom: bm.minZoom || 1,
-    maxZoom: bm.maxZoom || 19
+    minZoom: bm.minZoom || MIN_MAP_ZOOM,
+    maxZoom: bm.maxZoom || 19,
+    noWrap: true
   };
 
   let layer;
