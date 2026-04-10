@@ -33,6 +33,7 @@ Le projet fonctionne en **mode autonome** (intranet SAR BOX) et reste exploitabl
 
 ### APRS & configuration
 - Intégration APRS.fi via clé API.
+- Suivi avion via agrégation OpenSky Network + ADSB.lol (`fetch-aircraft-track.php`).
 - Sauvegarde de configuration via `save-config.php` vers `config.json`.
 
 ### Hors-ligne
@@ -51,6 +52,7 @@ Le projet fonctionne en **mode autonome** (intranet SAR BOX) et reste exploitabl
 ├── save-config.php              # API de sauvegarde config
 ├── save-op-active.php           # API de sauvegarde opération active
 ├── prepare-local-basemap.php    # API de préchargement tuiles locales
+├── fetch-aircraft-track.php      # API locale (OpenSky + ADSB.lol)
 ├── op-active.json               # État opération en cours
 ├── op-inactive.json             # Historique opérations clôturées
 ├── member-list.json             # Données membres/stations
@@ -93,6 +95,12 @@ Exemple :
 }
 ```
 
+Pour afficher tous les avions en direct sur la carte, ajouter aussi :
+
+```json
+"show-all-aircraft": true
+```
+
 ---
 
 ## API locales (PHP)
@@ -100,6 +108,8 @@ Exemple :
 - `POST /save-config.php` : enregistre la configuration applicative.
 - `POST /save-op-active.php` : enregistre l'opération active et archive les opérations clôturées.
 - `POST /prepare-local-basemap.php` : crée/remplit le cache de tuiles locales.
+- `GET /fetch-aircraft-track.php?registration=F-XXXX` : récupère la position avion via ADSB.lol + OpenSky.
+- `GET /fetch-aircraft-track.php?all=1` : récupère un snapshot global des avions (utilisé quand `show-all-aircraft=true`).
 
 > Important : ces endpoints nécessitent un serveur web avec PHP activé.
 
