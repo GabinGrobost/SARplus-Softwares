@@ -4693,14 +4693,55 @@ async function exportRowsAsPdf(rowsSource, fileName) {
     unit: 'mm',
     format: 'a4'
   });
-  doc.autoTable({
-    head: [EXPORT_COLUMNS],
-    body,
-    startY: 8,
-    styles: { fontSize: 8, cellPadding: 1.6 },
-    headStyles: { fillColor: [52, 52, 52] },
-    margin: { top: 8, left: 8, right: 8, bottom: 8 }
-  });
+
+  if (typeof doc.autoTable === 'function') {
+    doc.autoTable({
+      head: [EXPORT_COLUMNS],
+      body,
+      startY: 8,
+      styles: { fontSize: 8, cellPadding: 1.6 },
+      headStyles: { fillColor: [52, 52, 52] },
+      margin: { top: 8, left: 8, right: 8, bottom: 8 }
+    });
+    doc.save(fileName);
+    return;
+  }
+
+  // Fallback robuste si le plugin autoTable est indisponible.
+  const pageH = doc.internal.pageSize.getHeight();
+  const marginX = 8;
+  const marginY = 8;
+  const lineH = 4;
+  const maxLines = Math.max(1, Math.floor((pageH - marginY * 2) / lineH) - 1);
+  let y = marginY;
+
+  const renderLine = (txt, isHeader = false) => {
+    if (y > pageH - marginY) {
+      doc.addPage();
+      y = marginY;
+    }
+    doc.setFont('helvetica', isHeader ? 'bold' : 'normal');
+    doc.setFontSize(8);
+    doc.text(txt, marginX, y);
+    y += lineH;
+  };
+
+  renderLine(EXPORT_COLUMNS.join(' | '), true);
+
+  let linesOnPage = 0;
+  for (const r of body) {
+    if (linesOnPage >= maxLines) {
+      doc.addPage();
+      y = marginY;
+      renderLine(EXPORT_COLUMNS.join(' | '), true);
+      linesOnPage = 0;
+    }
+    const line = r.map(v => String(v ?? '').replace(/\s+/g, ' ').trim()).join(' | ');
+    const clipped = line.length > 190 ? `${line.slice(0, 187)}...` : line;
+    renderLine(clipped, false);
+    linesOnPage += 1;
+  }
+
   doc.save(fileName);
 }
 
