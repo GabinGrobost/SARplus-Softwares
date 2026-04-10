@@ -2545,7 +2545,7 @@
 
 <script>
 // ─── MAP INIT ─────────────────────────────────────────────────────────────────
-const MIN_MAP_ZOOM = 2;
+const MIN_MAP_ZOOM = 3;
 const WORLD_BOUNDS = L.latLngBounds(
   L.latLng(-85.05112878, -180),
   L.latLng(85.05112878, 180)
