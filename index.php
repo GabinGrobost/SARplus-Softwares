@@ -3280,7 +3280,7 @@ let maintenanceMode = false;
 const runtimeConfig = {
   entityName: 'ADRASEC 25',
   aprsApiKey: '',
-  flightradar24ApiUrl: '',
+  flightradar24ApiUrl: 'fetch-aircraft-track.php',
   flightradar24RefreshMs: 45000,
   ignScan25HashKey: '',
   departementCode: '25',
@@ -3323,11 +3323,21 @@ async function loadRuntimeConfig() {
     runtimeConfig.entityName = String(cfg['entity-name'] ?? cfg.entityName ?? runtimeConfig.entityName);
     runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
     runtimeConfig.flightradar24ApiUrl = String(
-      cfg['flightradar24-api-url'] ?? cfg.flightradar24ApiUrl ?? runtimeConfig.flightradar24ApiUrl
+      cfg['aircraft-track-api-url']
+      ?? cfg.aircraftTrackApiUrl
+      ?? cfg['flightradar24-api-url']
+      ?? cfg.flightradar24ApiUrl
+      ?? runtimeConfig.flightradar24ApiUrl
     ).trim();
     runtimeConfig.flightradar24RefreshMs = Math.max(
       15000,
-      Number(cfg['flightradar24-refresh-ms'] ?? cfg.flightradar24RefreshMs ?? runtimeConfig.flightradar24RefreshMs) || 45000
+      Number(
+        cfg['aircraft-track-refresh-ms']
+        ?? cfg.aircraftTrackRefreshMs
+        ?? cfg['flightradar24-refresh-ms']
+        ?? cfg.flightradar24RefreshMs
+        ?? runtimeConfig.flightradar24RefreshMs
+      ) || 45000
     );
     runtimeConfig.ignScan25HashKey = String(
       cfg['ignscan25-hash-key'] ?? cfg.ignScan25HashKey ?? runtimeConfig.ignScan25HashKey
@@ -4290,7 +4300,7 @@ async function refreshFlightRadarTracking() {
     drawFlightRadarOverlay(flightData, registration);
     scheduleOpActiveSync('flight-radar-updated');
   } catch (e) {
-    console.warn('[CartoFLU] Données Flightradar24 indisponibles :', e);
+    console.warn('[CartoFLU] Données OpenSky/ADSB indisponibles :', e);
     notify(`⚠ Données avion indisponibles pour ${registration}`, true);
   }
 }
