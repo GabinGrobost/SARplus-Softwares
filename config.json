@@ -2,6 +2,8 @@
   "entity-name": "ADRASEC 25",
   "departement-code": "25",
   "aprsfi-api-key": "",
+  "flightradar24-api-url": "",
+  "flightradar24-refresh-ms": 45000,
   "ignscan25-hash-key": "",
   "force-offline": false,
   "local-basemap-urls": {

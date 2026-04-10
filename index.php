@@ -204,6 +204,21 @@
     z-index: 1000;
   }
 
+  .offline-status-banner {
+    width: 100%;
+    flex-shrink: 0;
+    background: #c1121f;
+    color: #fff;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    text-align: center;
+    padding: 7px 12px;
+    border-bottom: 1px solid rgba(0,0,0,0.25);
+    z-index: 999;
+  }
+
   .logo {
     font-family: 'Share Tech Mono', monospace;
     font-size: 24px;
@@ -1982,6 +1997,9 @@
     </div>
   </div>
 </header>
+<div id="offlineStatusBanner" class="offline-status-banner" role="status" aria-live="polite">
+  Hors ligne
+</div>
 
 <div class="workspace">
 
@@ -2484,6 +2502,10 @@
                 <option value="Autre">Autre</option>
               </select>
             </div>
+            <div class="form-group" id="sarAircraftRegistrationGroup" style="display:none;">
+              <label for="sarAircraftRegistration">Immatriculation de l'appareil (optionnel)</label>
+              <input type="text" id="sarAircraftRegistration" placeholder="ex : F-GZND" maxlength="16" />
+            </div>
             <div class="form-group">
               <label>Exercice ?</label>
               <div class="sar-toggle-row" id="sarExerciseToggle">
@@ -2662,6 +2684,9 @@ let dfciPreviewLayer = null;
 let dfciPreviewPopup = null;
 const dfciMarkedLayer = L.layerGroup().addTo(map);
 let dfciMarkedZones = [];
+const flightradarLayer = L.layerGroup().addTo(map);
+let flightradarRefreshTimer = null;
+let currentFlightRadarState = null;
 
 const BASEMAPS = {
   osm: {
@@ -3255,6 +3280,8 @@ let maintenanceMode = false;
 const runtimeConfig = {
   entityName: 'ADRASEC 25',
   aprsApiKey: '',
+  flightradar24ApiUrl: '',
+  flightradar24RefreshMs: 45000,
   ignScan25HashKey: '',
   departementCode: '25',
   forceOffline: false,
@@ -3295,6 +3322,13 @@ async function loadRuntimeConfig() {
     const cfg = await resp.json();
     runtimeConfig.entityName = String(cfg['entity-name'] ?? cfg.entityName ?? runtimeConfig.entityName);
     runtimeConfig.aprsApiKey = String(cfg['aprsfi-api-key'] ?? cfg.aprsApiKey ?? runtimeConfig.aprsApiKey);
+    runtimeConfig.flightradar24ApiUrl = String(
+      cfg['flightradar24-api-url'] ?? cfg.flightradar24ApiUrl ?? runtimeConfig.flightradar24ApiUrl
+    ).trim();
+    runtimeConfig.flightradar24RefreshMs = Math.max(
+      15000,
+      Number(cfg['flightradar24-refresh-ms'] ?? cfg.flightradar24RefreshMs ?? runtimeConfig.flightradar24RefreshMs) || 45000
+    );
     runtimeConfig.ignScan25HashKey = String(
       cfg['ignscan25-hash-key'] ?? cfg.ignScan25HashKey ?? runtimeConfig.ignScan25HashKey
     ).trim();
@@ -3651,12 +3685,13 @@ function getSarOperationFormSnapshot() {
   const name = document.getElementById('sarOperationName')?.value.trim() || '';
   const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
   const type = document.getElementById('sarOperationType')?.value || '';
+  const aircraftRegistration = (document.getElementById('sarAircraftRegistration')?.value || '').trim().toUpperCase();
   const exercise = document.getElementById('sarExercise')?.value || 'non';
   const sizing = document.getElementById('sarSizing')?.value || '';
   const openingAuthority = document.getElementById('sarOpeningAuthority')?.value || 'non';
   const openingAuthorityLabel = getOpeningAuthorityLabel(sizing);
   const hasAnyValue = !!(name || ref || type || sizing);
-  return { hasAnyValue, name, ref, type, exercise, sizing, openingAuthority, openingAuthorityLabel };
+  return { hasAnyValue, name, ref, type, aircraftRegistration, exercise, sizing, openingAuthority, openingAuthorityLabel };
 }
 
 function getRollcallStationsSnapshot() {
@@ -3718,6 +3753,7 @@ function buildOpActivePayload(source = 'ui') {
       name: operationFormData.name,
       ref: operationFormData.ref,
       type: operationFormData.type,
+      aircraftRegistration: operationFormData.aircraftRegistration,
       exercise: operationFormData.exercise,
       sizing: operationFormData.sizing,
       openingAuthority: operationFormData.openingAuthority,
@@ -3729,7 +3765,8 @@ function buildOpActivePayload(source = 'ui') {
       negListenings: negListenings.map(n => ({ ...n })),
       balise: getBaliseSnapshot(),
       intersection: intersectionState ? { ...intersectionState } : null,
-      dfciZones: dfciMarkedZones.map(z => ({ code: z.code, latlngs: z.latlngs }))
+      dfciZones: dfciMarkedZones.map(z => ({ code: z.code, latlngs: z.latlngs })),
+      flightRadar: getFlightRadarSnapshot()
     },
     sync: {
       source,
@@ -3923,6 +3960,8 @@ function hydrateOperationFromPayload(data, sourceLabel = 'op-active.json', optio
   currentSarOperation = { ...data.operation, readOnly };
   lastSarOperationMeta = { ...data.operation };
   updateOperationControls();
+  restoreFlightRadarFromSnapshot(data?.session?.flightRadar || null);
+  if (!readOnly) startFlightRadarTracking();
 
   const savedBearings = Array.isArray(data?.session?.bearings) ? data.session.bearings : [];
   const savedNegListenings = Array.isArray(data?.session?.negListenings) ? data.session.negListenings : [];
@@ -4046,6 +4085,18 @@ function updateOperationControls() {
     closeMapContextMenu();
   }
   applyAprsAvailabilityState();
+  updateOfflineStatusBanner(operationActive);
+}
+
+function updateOfflineStatusBanner(operationActive = hasActiveOperation()) {
+  const banner = document.getElementById('offlineStatusBanner');
+  if (!banner) return;
+  const offline = isOfflineBasemapMode();
+  banner.style.display = offline ? 'block' : 'none';
+  if (!offline) return;
+  banner.textContent = operationActive
+    ? 'Opération lancé en mode dégradé'
+    : 'Hors ligne';
 }
 
 function setOpenOperationBusy(isBusy) {
@@ -4055,6 +4106,201 @@ function setOpenOperationBusy(isBusy) {
   btn.style.opacity = isBusy ? '0.7' : '';
   btn.style.cursor = isBusy ? 'progress' : '';
   btn.textContent = isBusy ? 'Test internet…' : 'Ouvrir une operation';
+}
+
+function normalizeTrackPoints(points = []) {
+  if (!Array.isArray(points)) return [];
+  return points
+    .map(p => {
+      if (Array.isArray(p) && p.length >= 2) {
+        const lat = Number(p[0]);
+        const lon = Number(p[1]);
+        return Number.isFinite(lat) && Number.isFinite(lon) ? [lat, lon] : null;
+      }
+      const lat = Number(p?.lat ?? p?.latitude);
+      const lon = Number(p?.lon ?? p?.lng ?? p?.longitude);
+      return Number.isFinite(lat) && Number.isFinite(lon) ? [lat, lon] : null;
+    })
+    .filter(Boolean);
+}
+
+function clearFlightRadarOverlay() {
+  flightradarLayer.clearLayers();
+}
+
+function normalizeFlightRadarSnapshot(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const plannedTrack = normalizeTrackPoints(snapshot.plannedTrack || []);
+  const pastTrack = normalizeTrackPoints(snapshot.pastTrack || []);
+  const currentTrack = normalizeTrackPoints(snapshot.currentTrack || []);
+  const radarLost = !!snapshot.radarLost;
+  const registration = String(snapshot.registration || '').trim().toUpperCase();
+  const cpLat = Number(snapshot?.currentPosition?.lat);
+  const cpLon = Number(snapshot?.currentPosition?.lon);
+  const lkLat = Number(snapshot?.lastKnownPosition?.lat);
+  const lkLon = Number(snapshot?.lastKnownPosition?.lon);
+  return {
+    registration,
+    plannedTrack,
+    pastTrack,
+    currentTrack,
+    radarLost,
+    currentPosition: Number.isFinite(cpLat) && Number.isFinite(cpLon) ? { lat: cpLat, lon: cpLon } : null,
+    lastKnownPosition: Number.isFinite(lkLat) && Number.isFinite(lkLon) ? { lat: lkLat, lon: lkLon } : null,
+    updatedAt: snapshot.updatedAt || new Date().toISOString()
+  };
+}
+
+function getFlightRadarSnapshot() {
+  return currentFlightRadarState ? JSON.parse(JSON.stringify(currentFlightRadarState)) : null;
+}
+
+function restoreFlightRadarFromSnapshot(snapshot = null) {
+  const normalized = normalizeFlightRadarSnapshot(snapshot);
+  if (!normalized) {
+    currentFlightRadarState = null;
+    clearFlightRadarOverlay();
+    return;
+  }
+  currentFlightRadarState = normalized;
+  drawFlightRadarOverlay(normalized, normalized.registration);
+}
+
+function stopFlightRadarTracking() {
+  if (flightradarRefreshTimer) {
+    clearInterval(flightradarRefreshTimer);
+    flightradarRefreshTimer = null;
+  }
+  currentFlightRadarState = null;
+  clearFlightRadarOverlay();
+}
+
+function drawFlightRadarOverlay(flightData = {}, registration = '') {
+  clearFlightRadarOverlay();
+  const planned = normalizeTrackPoints(flightData.plannedTrack || flightData.route || []);
+  const past = normalizeTrackPoints(flightData.pastTrack || flightData.trail || []);
+  const current = normalizeTrackPoints(flightData.currentTrack || flightData.futureTrack || []);
+  const lastKnown = flightData.lastKnownPosition || flightData.lastKnown || null;
+  const radarLost = !!(flightData.radarLost || flightData.lost || flightData.isLost);
+
+  if (planned.length >= 2) {
+    L.polyline(planned, { color: '#6cb2ff', weight: 2.5, dashArray: '8 6', opacity: 0.85 }).addTo(flightradarLayer);
+  }
+  if (past.length >= 2) {
+    L.polyline(past, { color: '#ffb703', weight: 3, opacity: 0.9 }).addTo(flightradarLayer);
+  }
+  if (!radarLost && current.length >= 2) {
+    L.polyline(current, { color: '#39ff14', weight: 3.5, opacity: 0.95 }).addTo(flightradarLayer);
+  }
+
+  const currentPosition = flightData.currentPosition || flightData.position || null;
+  const currentLat = Number(currentPosition?.lat ?? currentPosition?.latitude);
+  const currentLon = Number(currentPosition?.lon ?? currentPosition?.lng ?? currentPosition?.longitude);
+  if (!radarLost && Number.isFinite(currentLat) && Number.isFinite(currentLon)) {
+    const planeIcon = L.divIcon({
+      className: 'plane-blip-icon',
+      html: '<div style="font-size:20px;line-height:1;filter:drop-shadow(0 0 2px #000)">✈</div>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+    L.marker([currentLat, currentLon], { icon: planeIcon })
+      .bindPopup(`<div class="popup-title">✈ ${escapeHtml(registration || 'Appareil')}</div>`)
+      .addTo(flightradarLayer);
+  }
+
+  if (radarLost) {
+    const lkLat = Number(lastKnown?.lat ?? lastKnown?.latitude);
+    const lkLon = Number(lastKnown?.lon ?? lastKnown?.lng ?? lastKnown?.longitude);
+    if (Number.isFinite(lkLat) && Number.isFinite(lkLon)) {
+      const lostIcon = L.divIcon({
+        className: 'plane-lost-icon',
+        html: '<div style="font-size:18px;font-weight:700;color:#ff2d55;line-height:1;filter:drop-shadow(0 0 2px #000)">!</div>',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9]
+      });
+      L.marker([lkLat, lkLon], { icon: lostIcon })
+        .bindPopup(`<div class="popup-title">⚠ Dernière position connue (${escapeHtml(registration || 'Appareil')})</div>`)
+        .addTo(flightradarLayer);
+    }
+  }
+
+  currentFlightRadarState = normalizeFlightRadarSnapshot({
+    registration,
+    plannedTrack: planned,
+    pastTrack: past,
+    currentTrack: current,
+    radarLost,
+    currentPosition: Number.isFinite(currentLat) && Number.isFinite(currentLon) ? { lat: currentLat, lon: currentLon } : null,
+    lastKnownPosition: (Number.isFinite(Number(lastKnown?.lat ?? lastKnown?.latitude)) && Number.isFinite(Number(lastKnown?.lon ?? lastKnown?.lng ?? lastKnown?.longitude)))
+      ? {
+          lat: Number(lastKnown?.lat ?? lastKnown?.latitude),
+          lon: Number(lastKnown?.lon ?? lastKnown?.lng ?? lastKnown?.longitude)
+        }
+      : null,
+    updatedAt: new Date().toISOString()
+  });
+}
+
+function normalizeFlightradarResponse(raw = {}) {
+  const data = raw?.data && typeof raw.data === 'object' ? raw.data : raw;
+  return {
+    plannedTrack: data?.plannedTrack || data?.planned || data?.flightPlan || [],
+    pastTrack: data?.pastTrack || data?.history || data?.trackPast || [],
+    currentTrack: data?.currentTrack || data?.projectedTrack || data?.trackCurrent || [],
+    currentPosition: data?.currentPosition || data?.position || null,
+    radarLost: !!(data?.radarLost || data?.lost || data?.isLost),
+    lastKnownPosition: data?.lastKnownPosition || data?.lastKnown || null
+  };
+}
+
+async function fetchFlightRadarTrack(registration = '') {
+  const reg = String(registration || '').trim().toUpperCase();
+  if (!reg) return null;
+  const baseUrl = (runtimeConfig.flightradar24ApiUrl || '').trim();
+  if (!baseUrl) return null;
+  const sep = baseUrl.includes('?') ? '&' : '?';
+  const url = `${baseUrl}${sep}registration=${encodeURIComponent(reg)}`;
+  const resp = await fetch(url, { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const raw = await resp.json();
+  return normalizeFlightradarResponse(raw);
+}
+
+async function refreshFlightRadarTracking() {
+  if (!hasActiveOperation()) {
+    stopFlightRadarTracking();
+    return;
+  }
+  const type = currentSarOperation?.type || '';
+  if (!shouldShowAircraftRegistrationForType(type)) {
+    stopFlightRadarTracking();
+    return;
+  }
+  const registration = (currentSarOperation?.aircraftRegistration || '').trim().toUpperCase();
+  if (!registration) {
+    stopFlightRadarTracking();
+    return;
+  }
+  try {
+    const flightData = await fetchFlightRadarTrack(registration);
+    if (!flightData) {
+      stopFlightRadarTracking();
+      return;
+    }
+    drawFlightRadarOverlay(flightData, registration);
+    scheduleOpActiveSync('flight-radar-updated');
+  } catch (e) {
+    console.warn('[CartoFLU] Données Flightradar24 indisponibles :', e);
+    notify(`⚠ Données avion indisponibles pour ${registration}`, true);
+  }
+}
+
+function startFlightRadarTracking() {
+  if (flightradarRefreshTimer) clearInterval(flightradarRefreshTimer);
+  refreshFlightRadarTracking();
+  flightradarRefreshTimer = setInterval(() => {
+    refreshFlightRadarTracking();
+  }, runtimeConfig.flightradar24RefreshMs || 45000);
 }
 
 function probeInternetImage(url, timeout = 2600) {
@@ -4095,6 +4341,7 @@ function startInitialInternetAccessCheck() {
     .then(async online => {
       lastInternetAccessStatus = !!online;
       refreshBasemapSelectOptions();
+      updateOfflineStatusBanner();
       if (!lastInternetAccessStatus) {
         await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
       }
@@ -4103,6 +4350,7 @@ function startInitialInternetAccessCheck() {
     .catch(async () => {
       lastInternetAccessStatus = false;
       refreshBasemapSelectOptions();
+      updateOfflineStatusBanner();
       await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
       return false;
     });
@@ -4112,12 +4360,14 @@ function startInitialInternetAccessCheck() {
 window.addEventListener('offline', async () => {
   lastInternetAccessStatus = false;
   refreshBasemapSelectOptions();
+  updateOfflineStatusBanner();
   await switchToOfflineBasemap(OFFLINE_DEFAULT_BASEMAP_KEY, { silent: true });
 });
 
 window.addEventListener('online', () => {
   lastInternetAccessStatus = true;
   refreshBasemapSelectOptions();
+  updateOfflineStatusBanner();
 });
 
 function resetSarOperationForm() {
@@ -4125,12 +4375,14 @@ function resetSarOperationForm() {
   const ref = document.getElementById('sarOperationRef');
   const type = document.getElementById('sarOperationType');
   const sizing = document.getElementById('sarSizing');
+  const aircraftRegistration = document.getElementById('sarAircraftRegistration');
   const exercise = document.getElementById('sarExercise');
   const openingAuthority = document.getElementById('sarOpeningAuthority');
   if (name) name.value = '';
   if (ref) ref.value = buildDefaultOperationRef();
   if (type) type.value = '';
   if (sizing) sizing.value = '';
+  if (aircraftRegistration) aircraftRegistration.value = '';
   if (exercise) exercise.value = 'non';
   if (openingAuthority) openingAuthority.value = 'non';
   document.querySelectorAll('#sarExerciseToggle .sar-toggle-btn').forEach((btn, index) => {
@@ -4140,6 +4392,7 @@ function resetSarOperationForm() {
     btn.classList.toggle('active', index === 0);
   });
   updateOpeningAuthorityUi();
+  updateAircraftRegistrationField();
 }
 
 function getOpeningAuthorityLabel(sizingValue = '') {
@@ -4249,6 +4502,21 @@ function updateSarOperationModeUi(mode) {
       ? 'L\'opération s\'ouvre en <strong>mode dégradé</strong>. Les fonctions dépendantes d\'internet devront être évitées ou reportées.'
       : 'L\'accès internet a été détecté. Le formulaire s\'ouvre en <strong>mode connecté</strong>.';
   }
+}
+
+function shouldShowAircraftRegistrationForType(operationType = '') {
+  const normalized = String(operationType || '').trim().toUpperCase();
+  return normalized === 'SATER' || normalized === 'SAMER' || normalized === 'SAMAR';
+}
+
+function updateAircraftRegistrationField() {
+  const type = document.getElementById('sarOperationType')?.value || '';
+  const group = document.getElementById('sarAircraftRegistrationGroup');
+  const input = document.getElementById('sarAircraftRegistration');
+  if (!group || !input) return;
+  const visible = shouldShowAircraftRegistrationForType(type);
+  group.style.display = visible ? '' : 'none';
+  if (!visible) input.value = '';
 }
 
 async function openSarOperationOverlay(mode = 'connected') {
@@ -4407,6 +4675,7 @@ function submitSarOperation() {
   const name = document.getElementById('sarOperationName')?.value.trim() || '';
   const ref = (document.getElementById('sarOperationRef')?.value || '').trim().toUpperCase();
   const type = document.getElementById('sarOperationType')?.value || '';
+  const aircraftRegistration = (document.getElementById('sarAircraftRegistration')?.value || '').trim().toUpperCase();
   const exercise = document.getElementById('sarExercise')?.value || 'non';
   const sizing = document.getElementById('sarSizing')?.value || '';
   const openingAuthority = document.getElementById('sarOpeningAuthority')?.value || 'non';
@@ -4432,6 +4701,7 @@ function submitSarOperation() {
     name,
     ref,
     type,
+    aircraftRegistration: shouldShowAircraftRegistrationForType(type) ? aircraftRegistration : '',
     exercise,
     sizing,
     openingAuthority,
@@ -4445,6 +4715,7 @@ function submitSarOperation() {
   updateOperationControls();
   showRollcallReminderBanner();
   notify(`📂 Opération ${name} ouverte en ${sarOperationMode === 'degraded' ? 'mode dégradé' : 'mode connecté'} ✓`);
+  startFlightRadarTracking();
   scheduleOpActiveSync('operation-opened');
   flushOpActiveSync('operation-opened-immediate');
 }
@@ -4848,7 +5119,7 @@ async function openArchivedOperationByRef(ref) {
             closedAt: archived?.closedAt || null
           },
           rollcall: archived?.rollcall || { stations: [] },
-          session: archived?.session || { bearings: [], negListenings: [], balise: null, intersection: null }
+          session: archived?.session || { bearings: [], negListenings: [], balise: null, intersection: null, flightRadar: null }
         };
 
     return hydrateOperationFromPayload(snapshot, `archive ${normalizedRef}`, { allowInactive: true, readOnly: true });
@@ -4877,6 +5148,7 @@ async function closeOperation() {
     closedAt: new Date().toISOString()
   };
   currentSarOperation = null;
+  stopFlightRadarTracking();
   closeSarOperationOverlay();
   closeSarOfflineModal();
   closeArchivedOperationsModal();
@@ -8459,7 +8731,7 @@ if (sarOperationRefInput) {
   });
 }
 
-['sarOperationName', 'sarOperationType', 'sarExercise', 'sarSizing', 'sarOpeningAuthority'].forEach(id => {
+['sarOperationName', 'sarOperationType', 'sarAircraftRegistration', 'sarExercise', 'sarSizing', 'sarOpeningAuthority'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('input', () => scheduleOpActiveSync('operation-form-updated'));
@@ -8469,8 +8741,19 @@ if (sarOperationRefInput) {
 const sarOperationTypeSelect = document.getElementById('sarOperationType');
 if (sarOperationTypeSelect) {
   sarOperationTypeSelect.addEventListener('change', () => {
+    updateAircraftRegistrationField();
     refreshOperationRefFromType();
     scheduleOpActiveSync('operation-form-updated');
+  });
+}
+
+const sarAircraftRegistrationInput = document.getElementById('sarAircraftRegistration');
+if (sarAircraftRegistrationInput) {
+  sarAircraftRegistrationInput.addEventListener('input', () => {
+    sarAircraftRegistrationInput.value = sarAircraftRegistrationInput.value
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]/g, '')
+      .slice(0, 16);
   });
 }
 
@@ -8479,6 +8762,7 @@ document.getElementById('sarSizing')?.addEventListener('change', () => {
 });
 
 updateOpeningAuthorityUi();
+updateAircraftRegistrationField();
 
 const _initialSplashStartedAt = Date.now();
 const _initialSplashProgressBar = document.getElementById('initialSplashProgressBar');
