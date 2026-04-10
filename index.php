@@ -4209,6 +4209,97 @@ function computeHeadingFromTrack(points = []) {
   return Number.isFinite(bearing) ? bearing : null;
 }
 
+function normalizeHeading(value) {
+  const heading = Number(value);
+  if (!Number.isFinite(heading)) return null;
+  const normalized = ((heading % 360) + 360) % 360;
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function destinationPoint(lat, lon, bearingDeg, distanceNm) {
+  const brng = Number(bearingDeg) * Math.PI / 180;
+  const distRad = (Number(distanceNm) * 1852) / 6371000;
+  const lat1 = Number(lat) * Math.PI / 180;
+  const lon1 = Number(lon) * Math.PI / 180;
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(distRad)
+      + Math.cos(lat1) * Math.sin(distRad) * Math.cos(brng)
+  );
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(brng) * Math.sin(distRad) * Math.cos(lat1),
+    Math.cos(distRad) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  return {
+    lat: lat2 * 180 / Math.PI,
+    lon: ((lon2 * 180 / Math.PI + 540) % 360) - 180
+  };
+}
+
+function inferEstimatedAirCorridor({ planned = [], projected = [], past = [], persisted = [], currentPosition = null, heading = null, origin = '', destination = '' } = {}) {
+  const route = normalizeTrackPoints(planned).length >= 2
+    ? normalizeTrackPoints(planned)
+    : normalizeTrackPoints(projected);
+  const currentLat = Number(currentPosition?.lat ?? currentPosition?.latitude);
+  const currentLon = Number(currentPosition?.lon ?? currentPosition?.lng ?? currentPosition?.longitude);
+  const hasCurrent = Number.isFinite(currentLat) && Number.isFinite(currentLon);
+  const inferredHeading = normalizeHeading(heading)
+    ?? computeHeadingFromTrack(persisted)
+    ?? computeHeadingFromTrack(past)
+    ?? computeHeadingFromTrack(route);
+
+  let corridorSegment = [];
+  let corridorLabel = '';
+  if (route.length >= 2 && hasCurrent) {
+    const refLat = currentLat * Math.PI / 180;
+    const cosRef = Math.max(0.25, Math.cos(refLat));
+    const toXY = (p) => ({
+      x: (Number(p.lon) - currentLon) * 60 * cosRef,
+      y: (Number(p.lat) - currentLat) * 60
+    });
+    let best = null;
+    for (let i = 0; i < route.length - 1; i++) {
+      const a = toXY(route[i]);
+      const b = toXY(route[i + 1]);
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const ab2 = abx * abx + aby * aby;
+      if (ab2 <= 0) continue;
+      const t = Math.max(0, Math.min(1, (-(a.x * abx + a.y * aby)) / ab2));
+      const px = a.x + t * abx;
+      const py = a.y + t * aby;
+      const d2 = px * px + py * py;
+      if (!best || d2 < best.d2) best = { d2, i };
+    }
+    if (best) {
+      corridorSegment = [route[best.i], route[best.i + 1]];
+      corridorLabel = `Segment planifié ${best.i + 1}/${route.length - 1}`;
+    }
+  }
+
+  if (!corridorLabel && origin && destination) {
+    corridorLabel = `${String(origin).trim().toUpperCase()} → ${String(destination).trim().toUpperCase()}`;
+  } else if (!corridorLabel && inferredHeading !== null) {
+    corridorLabel = `Cap estimé ${Math.round(inferredHeading)}°`;
+  }
+
+  const trajectory = [];
+  if (hasCurrent) {
+    trajectory.push({ lat: currentLat, lon: currentLon });
+    if (corridorSegment.length >= 2) {
+      const endPoint = corridorSegment[1];
+      trajectory.push({ lat: Number(endPoint.lat), lon: Number(endPoint.lon) });
+    } else if (inferredHeading !== null) {
+      trajectory.push(destinationPoint(currentLat, currentLon, inferredHeading, 35));
+    }
+  }
+
+  return {
+    corridorLabel,
+    corridorSegment: normalizeTrackPoints(corridorSegment),
+    trajectory: normalizeTrackPoints(trajectory)
+  };
+}
+
 function isRotorcraft(flightData = {}) {
   const hints = [
     flightData.aircraftType,
@@ -4237,6 +4328,7 @@ function formatFlightRadarPopupDetails(flightData = {}, normalizedReg = '', curr
     ['Altitude', flightData.altitude ?? flightData.meta?.altitude ?? ''],
     ['Vitesse', flightData.speed ?? flightData.meta?.speed ?? ''],
     ['Cap', flightData.heading ?? flightData.meta?.heading ?? ''],
+    ['Couloir estimé', flightData.estimatedCorridor || ''],
     ['Position', Number.isFinite(currentLat) && Number.isFinite(currentLon) ? `${currentLat.toFixed(5)}, ${currentLon.toFixed(5)}` : ''],
     ['Source', flightData.source?.primary || flightData.meta?.source || ''],
     ['Màj', flightData.updatedAt || '']
@@ -4286,6 +4378,7 @@ function normalizeFlightRadarSnapshot(snapshot = {}) {
     operator: snapshot.operator || '',
     origin: snapshot.origin || '',
     destination: snapshot.destination || '',
+    estimatedCorridor: snapshot.estimatedCorridor || '',
     source: snapshot.source || null,
     meta: snapshot.meta || null,
     popupOpen: !!snapshot.popupOpen,
@@ -4390,6 +4483,18 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
   const popupSpeed = flightData.speed ?? flightData.meta?.speed ?? null;
   const popupHeading = flightData.heading ?? flightData.meta?.heading ?? null;
   const iconHeading = popupHeading ?? computeHeadingFromTrack(persistedTrail) ?? computeHeadingFromTrack(past) ?? computeHeadingFromTrack(current) ?? 0;
+  const estimatedAirCorridor = inferEstimatedAirCorridor({
+    planned,
+    projected,
+    past,
+    persisted: persistedTrail,
+    currentPosition,
+    heading: popupHeading,
+    origin: flightData.origin,
+    destination: flightData.destination
+  });
+  const estimatedCorridorText = estimatedAirCorridor.corridorLabel || '';
+  flightData.estimatedCorridor = estimatedCorridorText;
   const iconGlyph = isRotorcraft(flightData) ? '🚁' : '✈';
   const popupRows = formatFlightRadarPopupDetails(flightData, normalizedReg, currentLat, currentLon);
   const popupBody = `
@@ -4399,6 +4504,22 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
     </div>`;
 
   if (!radarLost && Number.isFinite(currentLat) && Number.isFinite(currentLon)) {
+    if (estimatedAirCorridor.corridorSegment.length >= 2) {
+      L.polyline(estimatedAirCorridor.corridorSegment, {
+        color: '#001f54',
+        weight: 2.5,
+        dashArray: '4 8',
+        opacity: 0.75
+      }).addTo(flightradarLayer);
+    }
+    if (estimatedAirCorridor.trajectory.length >= 2) {
+      L.polyline(estimatedAirCorridor.trajectory, {
+        color: '#001f54',
+        weight: 4,
+        dashArray: '10 8',
+        opacity: 0.95
+      }).addTo(flightradarLayer);
+    }
     const planeIcon = L.divIcon({
       className: 'plane-blip-icon',
       html: `<div style="font-size:20px;line-height:1;filter:drop-shadow(0 0 2px #000);display:inline-block;transform:rotate(${Number(iconHeading).toFixed(1)}deg);transform-origin:center center;">${escapeHtml(iconGlyph)}</div>`,
@@ -4445,6 +4566,7 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
     operator: flightData.operator || '',
     origin: flightData.origin || '',
     destination: flightData.destination || '',
+    estimatedCorridor: estimatedCorridorText,
     popupOpen: hadPopupOpen,
     plannedTrack: planned,
     pastTrack: past,
@@ -4486,6 +4608,7 @@ function normalizeFlightradarResponse(raw = {}) {
     operator: data?.operator ?? '',
     origin: data?.origin ?? '',
     destination: data?.destination ?? '',
+    estimatedCorridor: data?.estimatedCorridor ?? '',
     source: data?.source || null,
     meta: data?.meta && typeof data.meta === 'object' ? data.meta : null,
     updatedAt: data?.updatedAt || new Date().toISOString()
