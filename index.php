@@ -3683,9 +3683,13 @@ let _opActiveSyncTimer = null;
 let _opActiveSyncInFlight = false;
 let _opActiveLastPayload = '';
 let _opActiveRetryTimer = null;
+let _opActiveRetryDelayMs = 3000;
+let _opActiveSyncDisabledReason = null;
 let _inactiveOperationsCache = [];
 let _allowReadOnlyMutation = false;
 const OPERATION_REF_PLACE_CODE = '25';
+const OP_ACTIVE_RETRY_BASE_MS = 3000;
+const OP_ACTIVE_RETRY_MAX_MS = 60000;
 
 
 function hasActiveOperation() {
@@ -3792,6 +3796,13 @@ function buildOpActivePayload(source = 'ui') {
 
 async function flushOpActiveSync(source = 'ui') {
   if (_opActiveSyncInFlight) return;
+  if (_opActiveSyncDisabledReason) return;
+  if (location.protocol === 'file:') {
+    _opActiveSyncDisabledReason = 'file-protocol';
+    console.warn('[CartoFLU] Sync op-active.json désactivée : serveur HTTP requis (fichier ouvert en file://).');
+    return;
+  }
+  if (_opActiveRetryTimer && source !== 'beforeunload') return;
   const payload = buildOpActivePayload(source);
   if (!payload) return;
   const payloadText = JSON.stringify(payload);
@@ -3811,15 +3822,20 @@ async function flushOpActiveSync(source = 'ui') {
       clearTimeout(_opActiveRetryTimer);
       _opActiveRetryTimer = null;
     }
+    _opActiveRetryDelayMs = OP_ACTIVE_RETRY_BASE_MS;
   } catch (e) {
     localStorage.setItem(OP_ACTIVE_PENDING_KEY, payloadText);
     if (!_opActiveRetryTimer) {
+      const retryDelay = _opActiveRetryDelayMs;
       _opActiveRetryTimer = setTimeout(() => {
         _opActiveRetryTimer = null;
         flushOpActiveSync('retry-after-failure');
-      }, 3000);
+      }, retryDelay);
+      _opActiveRetryDelayMs = Math.min(OP_ACTIVE_RETRY_MAX_MS, retryDelay * 2);
     }
-    console.warn('[CartoFLU] Sync op-active.json impossible :', e);
+    if (navigator.onLine) {
+      console.warn('[CartoFLU] Sync op-active.json impossible :', e);
+    }
   } finally {
     _opActiveSyncInFlight = false;
   }
@@ -3827,7 +3843,7 @@ async function flushOpActiveSync(source = 'ui') {
 
 async function flushPendingOpActiveSync(source = 'pending-retry') {
   const pendingPayloadText = localStorage.getItem(OP_ACTIVE_PENDING_KEY);
-  if (!pendingPayloadText || _opActiveSyncInFlight) return;
+  if (!pendingPayloadText || _opActiveSyncInFlight || _opActiveSyncDisabledReason) return;
   _opActiveSyncInFlight = true;
   try {
     const resp = await fetch(OP_ACTIVE_ENDPOINT, {
@@ -3843,14 +3859,19 @@ async function flushPendingOpActiveSync(source = 'pending-retry') {
       clearTimeout(_opActiveRetryTimer);
       _opActiveRetryTimer = null;
     }
+    _opActiveRetryDelayMs = OP_ACTIVE_RETRY_BASE_MS;
   } catch (e) {
     if (!_opActiveRetryTimer) {
+      const retryDelay = _opActiveRetryDelayMs;
       _opActiveRetryTimer = setTimeout(() => {
         _opActiveRetryTimer = null;
         flushPendingOpActiveSync('pending-retry-timer');
-      }, 3000);
+      }, retryDelay);
+      _opActiveRetryDelayMs = Math.min(OP_ACTIVE_RETRY_MAX_MS, retryDelay * 2);
     }
-    console.warn(`[CartoFLU] Reprise sync op-active.json (${source}) impossible :`, e);
+    if (navigator.onLine) {
+      console.warn(`[CartoFLU] Reprise sync op-active.json (${source}) impossible :`, e);
+    }
   } finally {
     _opActiveSyncInFlight = false;
   }
@@ -3858,6 +3879,7 @@ async function flushPendingOpActiveSync(source = 'pending-retry') {
 
 function scheduleOpActiveSync(source = 'ui') {
   if (isArchivedReadOnlyOperation()) return;
+  if (_opActiveSyncDisabledReason || _opActiveRetryTimer) return;
   if (_opActiveSyncTimer) clearTimeout(_opActiveSyncTimer);
   _opActiveSyncTimer = setTimeout(() => {
     _opActiveSyncTimer = null;
