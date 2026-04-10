@@ -5,16 +5,45 @@ header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
-    http_response_code(405);
-    echo json_encode(['ok' => false, 'error' => 'Method not allowed. Use GET.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
+    emit_json(['ok' => false, 'error' => 'Method not allowed. Use GET.'], 405);
 }
 
 $allAircraft = isset($_GET['all']) && ($_GET['all'] === '1' || strtolower((string)$_GET['all']) === 'true');
 $registration = strtoupper(trim((string)($_GET['registration'] ?? '')));
+
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool
+    {
+        return $needle === '' || strpos($haystack, $needle) !== false;
+    }
+}
+
+if (!function_exists('array_is_list')) {
+    function array_is_list(array $array): bool
+    {
+        $expectedKey = 0;
+        foreach ($array as $key => $_) {
+            if ($key !== $expectedKey) return false;
+            $expectedKey++;
+        }
+        return true;
+    }
+}
+
 if (!$allAircraft && $registration === '') {
-    http_response_code(400);
-    echo json_encode(['ok' => false, 'error' => 'Missing registration query parameter.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    emit_json(['ok' => false, 'error' => 'Missing registration query parameter.'], 400);
+}
+
+
+function emit_json(array $payload, int $statusCode = 200): void
+{
+    if (!headers_sent()) {
+        http_response_code($statusCode);
+    }
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
@@ -56,17 +85,49 @@ function http_get_json(string $url, int $timeout = 8): ?array
     return is_array($json) ? $json : null;
 }
 
-function pick_first_aircraft(array $payload): ?array
+function http_get_json_first(array $urls, int $timeout = 8, ?string &$resolvedUrl = null): ?array
 {
-    $candidates = [];
-    foreach (['ac', 'aircraft', 'data'] as $key) {
-        if (isset($payload[$key]) && is_array($payload[$key])) {
-            $candidates = $payload[$key];
-            break;
+    foreach ($urls as $url) {
+        if (!is_string($url) || trim($url) === '') continue;
+        $payload = http_get_json($url, $timeout);
+        if (is_array($payload)) {
+            $resolvedUrl = $url;
+            return $payload;
         }
     }
-    if ($candidates === [] && array_key_exists('hex', $payload)) {
-        $candidates = [$payload];
+    $resolvedUrl = null;
+    return null;
+}
+
+function aircraft_candidates_from_payload(array $payload): array
+{
+    foreach (['ac', 'aircraft', 'data', 'response', 'list'] as $key) {
+        if (isset($payload[$key]) && is_array($payload[$key])) {
+            return $payload[$key];
+        }
+    }
+    if (array_key_exists('hex', $payload) || array_key_exists('icao24', $payload)) {
+        return [$payload];
+    }
+    return [];
+}
+
+function registration_from_entry(array $entry): string
+{
+    return strtoupper(trim((string)($entry['r'] ?? $entry['reg'] ?? $entry['registration'] ?? '')));
+}
+
+function pick_first_aircraft(array $payload, string $registration = ''): ?array
+{
+    $candidates = aircraft_candidates_from_payload($payload);
+    $needle = strtoupper(trim($registration));
+
+    if ($needle !== '') {
+        foreach ($candidates as $entry) {
+            if (is_array($entry) && registration_from_entry($entry) === $needle) {
+                return $entry;
+            }
+        }
     }
 
     foreach ($candidates as $entry) {
@@ -79,6 +140,20 @@ function point_from_entry(array $entry): ?array
 {
     $lat = isset($entry['lat']) ? (float)$entry['lat'] : (isset($entry['latitude']) ? (float)$entry['latitude'] : NAN);
     $lon = isset($entry['lon']) ? (float)$entry['lon'] : (isset($entry['lng']) ? (float)$entry['lng'] : (isset($entry['longitude']) ? (float)$entry['longitude'] : NAN));
+
+    if (!is_finite($lat) || !is_finite($lon)) {
+        if (isset($entry['lastPosition']) && is_array($entry['lastPosition'])) {
+            $last = $entry['lastPosition'];
+            $lat = isset($last['lat']) ? (float)$last['lat'] : (isset($last['latitude']) ? (float)$last['latitude'] : NAN);
+            $lon = isset($last['lon']) ? (float)$last['lon'] : (isset($last['lng']) ? (float)$last['lng'] : (isset($last['longitude']) ? (float)$last['longitude'] : NAN));
+        }
+    }
+
+    if (!is_finite($lat) || !is_finite($lon)) {
+        $lat = isset($entry['rr_lat']) ? (float)$entry['rr_lat'] : NAN;
+        $lon = isset($entry['rr_lon']) ? (float)$entry['rr_lon'] : NAN;
+    }
+
     if (!is_finite($lat) || !is_finite($lon)) return null;
     return ['lat' => $lat, 'lon' => $lon];
 }
@@ -120,7 +195,7 @@ function normalize_all_aircraft(array $payload, int $limit = 250): array
         $out[] = [
             'lat' => $point['lat'],
             'lon' => $point['lon'],
-            'registration' => strtoupper(trim((string)($entry['r'] ?? $entry['registration'] ?? ''))),
+            'registration' => registration_from_entry($entry),
             'icao24' => strtolower(trim((string)($entry['hex'] ?? $entry['icao24'] ?? ''))),
             'callsign' => strtoupper(trim((string)($entry['flight'] ?? $entry['callsign'] ?? ''))),
         ];
@@ -151,21 +226,45 @@ function normalize_opensky_states(array $payload, int $limit = 300): array
     return $out;
 }
 
+function empty_aircraft_response(string $registration = '', string $reason = 'no-data', array $source = []): void
+{
+    emit_json([
+        'ok' => true,
+        'registration' => $registration,
+        'plannedTrack' => [],
+        'pastTrack' => [],
+        'currentTrack' => [],
+        'currentPosition' => null,
+        'radarLost' => false,
+        'lastKnownPosition' => null,
+        'allAircraft' => [],
+        'noData' => true,
+        'reason' => $reason,
+        'source' => $source,
+        'updatedAt' => gmdate('c')
+    ]);
+}
+
 if ($allAircraft) {
     $lat = isset($_GET['lat']) ? (float)$_GET['lat'] : 47.0;
     $lon = isset($_GET['lon']) ? (float)$_GET['lon'] : 2.0;
     $radiusNm = isset($_GET['radius']) ? (float)$_GET['radius'] : 250.0;
     if (!is_finite($lat) || !is_finite($lon)) {
-        http_response_code(400);
-        echo json_encode(['ok' => false, 'error' => 'Invalid lat/lon parameters'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        exit;
+        emit_json(['ok' => false, 'error' => 'Invalid lat/lon parameters'], 400);
     }
     $radiusNm = max(10.0, min(400.0, $radiusNm));
 
-    $snapshotUrl = sprintf('https://api.adsb.lol/v2/point/%s/%s/%s', rawurlencode((string)$lat), rawurlencode((string)$lon), rawurlencode((string)$radiusNm));
-    $snapshot = http_get_json($snapshotUrl, 10);
+    $clampedRadiusNm = max(10.0, min(250.0, $radiusNm));
+    $snapshotUrl = null;
+    $snapshot = http_get_json_first([
+        sprintf('https://opendata.adsb.fi/api/v3/lat/%s/lon/%s/dist/%s', rawurlencode((string)$lat), rawurlencode((string)$lon), rawurlencode((string)$clampedRadiusNm)),
+        sprintf('https://api.airplanes.live/v2/point/%s/%s/%s', rawurlencode((string)$lat), rawurlencode((string)$lon), rawurlencode((string)$clampedRadiusNm)),
+        sprintf('https://api.adsb.lol/v2/point/%s/%s/%s', rawurlencode((string)$lat), rawurlencode((string)$lon), rawurlencode((string)$clampedRadiusNm))
+    ], 10, $snapshotUrl);
     $all = is_array($snapshot) ? normalize_all_aircraft($snapshot, 300) : [];
-    $source = 'adsb.lol';
+    $source = $snapshotUrl && str_contains($snapshotUrl, 'opendata.adsb.fi')
+        ? 'adsb.fi-opendata'
+        : ($snapshotUrl && str_contains($snapshotUrl, 'airplanes.live') ? 'airplanes.live' : ($snapshotUrl ? 'adsb.lol' : ''));
 
     if ($all === []) {
         $deltaLat = $radiusNm / 60.0;
@@ -179,16 +278,21 @@ if ($allAircraft) {
         );
         $opensky = http_get_json($openskyUrl, 10);
         $all = is_array($opensky) ? normalize_opensky_states($opensky, 300) : [];
-        $source = 'opensky-network';
+        $source = $all !== [] ? 'opensky-network' : ($source !== '' ? $source : 'opensky-network');
     }
 
     if ($all === []) {
-        http_response_code(502);
-        echo json_encode(['ok' => false, 'error' => 'Unable to fetch global aircraft snapshot'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        exit;
+        empty_aircraft_response('', 'global-snapshot-unavailable', [
+            'primary' => $source,
+            'mode' => 'point-snapshot',
+            'query' => ['lat' => $lat, 'lon' => $lon, 'radiusNm' => $radiusNm]
+        ]);
     }
 
-    echo json_encode([
+    emit_json([
+        'ok' => true,
+        'noData' => false,
+        'registration' => '',
         'plannedTrack' => [],
         'pastTrack' => [],
         'currentTrack' => [],
@@ -202,22 +306,25 @@ if ($allAircraft) {
             'query' => ['lat' => $lat, 'lon' => $lon, 'radiusNm' => $radiusNm]
         ],
         'updatedAt' => gmdate('c')
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
+    ]);
 }
 
-$adsbUrl = 'https://api.adsb.lol/v2/registration/' . rawurlencode($registration);
-$adsbPayload = http_get_json($adsbUrl, 9);
-$adsbAircraft = is_array($adsbPayload) ? pick_first_aircraft($adsbPayload) : null;
+$adsbUrl = null;
+$adsbPayload = http_get_json_first([
+    'https://opendata.adsb.fi/api/v2/registration/' . rawurlencode($registration),
+    'https://api.airplanes.live/v2/reg/' . rawurlencode($registration),
+    'https://api.adsb.lol/v2/registration/' . rawurlencode($registration)
+], 9, $adsbUrl);
+$adsbAircraft = is_array($adsbPayload) ? pick_first_aircraft($adsbPayload, $registration) : null;
+$adsbSource = $adsbUrl && str_contains($adsbUrl, 'opendata.adsb.fi')
+    ? 'adsb.fi-opendata'
+    : ($adsbUrl && str_contains($adsbUrl, 'airplanes.live') ? 'airplanes.live' : ($adsbUrl ? 'adsb.lol' : ''));
 
 if (!$adsbAircraft) {
-    http_response_code(404);
-    echo json_encode([
-        'ok' => false,
-        'error' => 'Aircraft not found from ADSB.lol',
-        'registration' => $registration
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
+    empty_aircraft_response($registration, 'aircraft-not-found', [
+        'primary' => $adsbSource !== '' ? $adsbSource : 'adsb-registration-lookup',
+        'fallback' => 'opensky-network'
+    ]);
 }
 
 $icao24 = strtolower(trim((string)($adsbAircraft['hex'] ?? $adsbAircraft['icao24'] ?? '')));
@@ -248,6 +355,9 @@ if ($currentPosition === null && $lastKnown !== null) {
 }
 
 $response = [
+    'ok' => true,
+    'registration' => $registration,
+    'noData' => false,
     'plannedTrack' => [],
     'pastTrack' => $pastTrack,
     'currentTrack' => $currentPosition ? [$currentPosition] : [],
@@ -255,11 +365,11 @@ $response = [
     'radarLost' => $radarLost,
     'lastKnownPosition' => $lastKnown,
     'source' => [
-        'primary' => 'adsb.lol',
+        'primary' => $adsbSource !== '' ? $adsbSource : 'adsb-registration-lookup',
         'fallback' => 'opensky-network',
         'icao24' => $icao24,
     ],
     'updatedAt' => gmdate('c')
 ];
 
-echo json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+emit_json($response);
