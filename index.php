@@ -4568,7 +4568,7 @@ function buildExportRows(rowsSource = []) {
 }
 const EXPORT_COLUMNS = ['id', 'callsign', 'frequency', 'lat', 'lon', 'bearing', 'uncertainty', 'lineLength', 'color', 'notes'];
 
-async function exportTemplateWorkbookWithReplacements(templateArrayBuffer, replacements = {}, fileName = 'export.xlsx') {
+async function buildTemplateWorkbookBlobWithReplacements(templateArrayBuffer, replacements = {}) {
   if (typeof JSZip === 'undefined') {
     throw new Error('JSZip library unavailable');
   }
@@ -4590,6 +4590,11 @@ async function exportTemplateWorkbookWithReplacements(templateArrayBuffer, repla
     type: 'blob',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   });
+  return outBlob;
+}
+
+async function exportTemplateWorkbookWithReplacements(templateArrayBuffer, replacements = {}, fileName = 'export.xlsx') {
+  const outBlob = await buildTemplateWorkbookBlobWithReplacements(templateArrayBuffer, replacements);
   triggerDownloadBlob(outBlob, fileName);
 }
 
@@ -4701,6 +4706,39 @@ async function exportRowsAsPdf(rowsSource, fileName) {
   doc.save(fileName);
 }
 
+async function convertXlsxBlobToPdfBlob(xlsxBlob) {
+  const formData = new FormData();
+  formData.append('xlsx', xlsxBlob, 'export.xlsx');
+  const resp = await fetch('convert-xlsx-to-pdf.php', {
+    method: 'POST',
+    body: formData
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`PDF conversion failed (${resp.status}) ${txt}`.trim());
+  }
+  return await resp.blob();
+}
+
+async function exportRowsAsPdfFromTemplate(rowsSource, fileName, opts = {}) {
+  const operationType = getSafeOperationTypeFolder(opts?.operation?.type);
+  if (!operationType) return false;
+  const templateUrl = `model/${encodeURIComponent(operationType)}/LOG_RELEVES.xlsx`;
+  const templateResp = await fetch(templateUrl, { cache: 'no-store' });
+  if (!templateResp.ok) return false;
+  const buf = await templateResp.arrayBuffer();
+  const replacements = buildTemplateReplacements(
+    rowsSource,
+    opts?.operation || {},
+    opts?.presentCallsigns || [],
+    { closedAt: opts?.closedAt || null }
+  );
+  const xlsxBlob = await buildTemplateWorkbookBlobWithReplacements(buf, replacements);
+  const pdfBlob = await convertXlsxBlobToPdfBlob(xlsxBlob);
+  triggerDownloadBlob(pdfBlob, fileName);
+  return true;
+}
+
 async function exportArchivedOperationPdf(ref) {
   const normalizedRef = (ref || '').trim().toUpperCase();
   if (!/^\d{10}$/.test(normalizedRef)) {
@@ -4722,7 +4760,22 @@ async function exportArchivedOperationPdf(ref) {
     const rowsSource = Array.isArray(snapshot?.session?.bearings)
       ? snapshot.session.bearings
       : (Array.isArray(archived?.session?.bearings) ? archived.session.bearings : []);
-    await exportRowsAsPdf(rowsSource, `radiogonio_releves_archive_${normalizedRef}.pdf`);
+    const doneFromTemplate = await exportRowsAsPdfFromTemplate(rowsSource, `radiogonio_releves_archive_${normalizedRef}.pdf`, {
+      operation: {
+        ref: normalizedRef,
+        name: archived?.name || '',
+        type: archived?.type || snapshot?.operation?.type || '',
+        exercise: archived?.exercise || snapshot?.operation?.exercise || 'non',
+        createdAt: archived?.createdAt || snapshot?.operation?.createdAt || null
+      },
+      presentCallsigns: Array.isArray(snapshot?.rollcall?.presentCallsigns)
+        ? snapshot.rollcall.presentCallsigns
+        : (Array.isArray(archived?.rollcall?.presentCallsigns) ? archived.rollcall.presentCallsigns : []),
+      closedAt: archived?.closedAt || snapshot?.operation?.closedAt || null
+    }).catch(() => false);
+    if (!doneFromTemplate) {
+      await exportRowsAsPdf(rowsSource, `radiogonio_releves_archive_${normalizedRef}.pdf`);
+    }
     notify(`📥 Archive ${normalizedRef} exportée en PDF ✓`);
   } catch (e) {
     console.warn('[CartoFLU] Export PDF archive impossible :', e);
