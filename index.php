@@ -32,6 +32,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap');
 
@@ -840,6 +842,7 @@
 
   .tab-panel { display: none; flex: 1; overflow-y: auto; padding: 14px; }
   .tab-panel.active { display: flex; flex-direction: column; gap: 12px; }
+  .tab-panel-close-wrap { margin-top: auto; padding-top: 6px; }
 
   /* FORM */
   .form-section {
@@ -2225,6 +2228,9 @@
           Aucun relevé tracé.<br>Ajoutez des relevés depuis l'onglet <strong>Relevé</strong>.
         </div>
       </div>
+      <div class="tab-panel-close-wrap">
+        <button class="btn btn-secondary" style="width:100%;" onclick="closeSidebarTab()">Fermer</button>
+      </div>
     </div>
 
     <!-- TAB: PARAMETRES -->
@@ -2305,6 +2311,9 @@
 
       <!-- Station list -->
       <div id="aprsStationList" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
+      <div class="tab-panel-close-wrap">
+        <button class="btn btn-secondary" style="width:100%;" onclick="closeSidebarTab()">Fermer</button>
+      </div>
 
     </div>
 
@@ -2328,6 +2337,9 @@
           Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le modifier selon les termes de la <em>Licence Publique Générale GNU (GPL), version 3</em>, telle que publiée par la Free Software Foundation.<br><br>
           Ce programme est distribué dans l'espoir qu'il sera utile, mais <strong>SANS AUCUNE GARANTIE</strong>.
         </div>
+      </div>
+      <div class="tab-panel-close-wrap">
+        <button class="btn btn-secondary" style="width:100%;" onclick="closeSidebarTab()">Fermer</button>
       </div>
     </div>
 
@@ -2978,6 +2990,49 @@ function buildLocalProbeUrl(localUrlTemplate) {
     .replace('{y}', String(tile.y));
 }
 
+function buildTileUrlFromTemplate(urlTemplate, z, x, y) {
+  if (!urlTemplate) return '';
+  return urlTemplate
+    .replace('{z}', String(z))
+    .replace('{x}', String(x))
+    .replace('{y}', String(y))
+    .replace('{s}', 'a');
+}
+
+function preloadTileImage(url) {
+  return new Promise(resolve => {
+    if (!url) return resolve(false);
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = `${url}${url.includes('?') ? '&' : '?'}_preload=${Date.now()}`;
+  });
+}
+
+async function prechargeInitialMapTiles() {
+  const select = document.getElementById('basemapSelect');
+  if (!select) return;
+  const keys = [...new Set([currentBasemapKey, ...Array.from(select.options).map(opt => opt.value)])];
+  const center = map.getCenter();
+  const z = Math.max(0, Math.min(18, map.getZoom() || 6));
+  const tile = latLngToTile(center.lat, center.lng, z);
+
+  for (const key of keys) {
+    if (IGN_HASH_PROTECTED_BASEMAPS.has(key)) continue;
+    let tileUrl = '';
+    const wmtsTpl = getOnlineSeedUrlTemplate(key);
+    if (wmtsTpl) {
+      tileUrl = buildTileUrlFromTemplate(wmtsTpl, tile.z, tile.x, tile.y);
+    } else {
+      const bm = BASEMAPS[key];
+      if (!bm || bm.type === 'wms' || bm.restricted) continue;
+      tileUrl = buildTileUrlFromTemplate(bm.url, tile.z, tile.x, tile.y);
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await preloadTileImage(tileUrl);
+  }
+}
+
 async function ensureLocalBasemapPrepared(key) {
   const localBasemapUrls = runtimeConfig.localBasemapUrls || {};
   const localUrlTemplate = (localBasemapUrls[`${key}_local`] || localBasemapUrls[key] || '').trim();
@@ -3067,6 +3122,9 @@ function createBasemapLayer(bm, key = '') {
 }
 
 let currentTileLayer = createBasemapLayer(resolveBasemap('osmorg') || BASEMAPS.osmorg, 'osmorg').addTo(map);
+setTimeout(() => {
+  prechargeInitialMapTiles();
+}, 350);
 
 async function changeBasemap(key) {
   ensureLocalBasemapPrepared(key);
@@ -4304,6 +4362,7 @@ async function openArchivedOperationsModal() {
         <div class="sar-archived-meta">clôturée le ${formatArchiveDate(closedAt)}</div>
         <div class="sar-archived-actions">
           <button type="button" class="btn btn-secondary sar-archived-export-btn" title="Exporter les relevés de l'archive au format XLSX" onclick="exportArchivedOperationXlsx('${ref}')">📥 Exporter XLSX</button>
+          <button type="button" class="btn btn-secondary sar-archived-export-btn" title="Exporter les relevés de l'archive au format PDF (A4)" onclick="exportArchivedOperationPdf('${ref}')">📥 Exporter PDF</button>
           <button type="button" class="btn btn-secondary sar-archived-open-btn" title="Ouvrir en mode consultation" onclick="openArchivedOperationFromModal('${ref}')">👁</button>
         </div>
       </div>`;
@@ -4493,6 +4552,21 @@ function triggerDownloadBlob(blob, fileName) {
   URL.revokeObjectURL(href);
 }
 
+function buildExportRows(rowsSource = []) {
+  return rowsSource.map((b, idx) => ({
+    id: b?.id ?? idx + 1,
+    callsign: b?.callsign ?? '',
+    frequency: b?.frequency ?? '',
+    lat: b?.lat ?? '',
+    lon: b?.lon ?? '',
+    bearing: b?.bearing ?? '',
+    uncertainty: b?.uncertainty ?? '',
+    lineLength: b?.lineLength ?? '',
+    color: b?.color ?? '',
+    notes: b?.notes ?? ''
+  }));
+}
+
 async function exportTemplateWorkbookWithReplacements(templateArrayBuffer, replacements = {}, fileName = 'export.xlsx') {
   if (typeof JSZip === 'undefined') {
     throw new Error('JSZip library unavailable');
@@ -4543,18 +4617,7 @@ async function exportRowsAsXlsx(rowsSource, fileName, sheetName = 'Releves', opt
     }
   }
 
-  const rows = rowsSource.map((b, idx) => ({
-    id: b?.id ?? idx + 1,
-    callsign: b?.callsign ?? '',
-    frequency: b?.frequency ?? '',
-    lat: b?.lat ?? '',
-    lon: b?.lon ?? '',
-    bearing: b?.bearing ?? '',
-    uncertainty: b?.uncertainty ?? '',
-    lineLength: b?.lineLength ?? '',
-    color: b?.color ?? '',
-    notes: b?.notes ?? ''
-  }));
+  const rows = buildExportRows(rowsSource);
   const worksheet = XLSX.utils.json_to_sheet(rows, {
     header: ['id', 'callsign', 'frequency', 'lat', 'lon', 'bearing', 'uncertainty', 'lineLength', 'color', 'notes']
   });
@@ -4604,6 +4667,64 @@ async function exportArchivedOperationXlsx(ref) {
   } catch (e) {
     console.warn('[CartoFLU] Export XLSX archive impossible :', e);
     notify('⚠ Export XLSX impossible pour cette archive', true);
+  }
+}
+
+async function exportRowsAsPdf(rowsSource, fileName, title = 'Radiogonio - Relevés') {
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+    throw new Error('jsPDF library unavailable');
+  }
+  const rows = buildExportRows(rowsSource);
+  const headers = ['#', 'Indicatif', 'Fréq', 'Lat', 'Lon', 'Azimut', '±', 'Long. km', 'Couleur', 'Notes'];
+  const body = rows.map(r => [r.id, r.callsign, r.frequency, r.lat, r.lon, r.bearing, r.uncertainty, r.lineLength, r.color, r.notes]);
+  const notesMax = body.reduce((max, row) => Math.max(max, String(row[9] || '').length), 0);
+  const landscape = body.length > 18 || notesMax > 36;
+  const doc = new window.jspdf.jsPDF({
+    orientation: landscape ? 'landscape' : 'portrait',
+    unit: 'mm',
+    format: 'a4'
+  });
+  doc.setFontSize(12);
+  doc.text(title, 10, 10);
+  doc.setFontSize(9);
+  doc.text(`Export: ${new Date().toLocaleString('fr-FR')}`, 10, 15);
+  doc.autoTable({
+    head: [headers],
+    body,
+    startY: 18,
+    styles: { fontSize: 8, cellPadding: 1.6 },
+    headStyles: { fillColor: [52, 52, 52] },
+    margin: { top: 18, left: 8, right: 8, bottom: 8 }
+  });
+  doc.save(fileName);
+}
+
+async function exportArchivedOperationPdf(ref) {
+  const normalizedRef = (ref || '').trim().toUpperCase();
+  if (!/^\d{10}$/.test(normalizedRef)) {
+    notify('⚠ Référence archive invalide', true);
+    return;
+  }
+
+  try {
+    const resp = await fetch(OP_INACTIVE_FILE, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const operations = Array.isArray(data?.operations) ? data.operations : [];
+    const archived = operations.find(op => (op?.ref || '').trim().toUpperCase() === normalizedRef);
+    if (!archived) {
+      notify('⚠ Archive introuvable', true);
+      return;
+    }
+    const snapshot = (archived && typeof archived.snapshot === 'object' && archived.snapshot) ? archived.snapshot : null;
+    const rowsSource = Array.isArray(snapshot?.session?.bearings)
+      ? snapshot.session.bearings
+      : (Array.isArray(archived?.session?.bearings) ? archived.session.bearings : []);
+    await exportRowsAsPdf(rowsSource, `radiogonio_releves_archive_${normalizedRef}.pdf`, `Archive ${normalizedRef} - Relevés`);
+    notify(`📥 Archive ${normalizedRef} exportée en PDF ✓`);
+  } catch (e) {
+    console.warn('[CartoFLU] Export PDF archive impossible :', e);
+    notify('⚠ Export PDF impossible pour cette archive', true);
   }
 }
 
@@ -7425,6 +7546,10 @@ function toggleSidebar() {
   sb.style.display = sidebarVisible ? '' : 'none';
   updateSidebarToggleButton();
   setTimeout(() => map.invalidateSize(), 50);
+}
+
+function closeSidebarTab() {
+  if (sidebarVisible) toggleSidebar();
 }
 
 // ─── TABS ─────────────────────────────────────────────────────────────────────
