@@ -2,7 +2,7 @@
   "entity-name": "ADRASEC 25",
   "departement-code": "25",
   "aprsfi-api-key": "",
-  "flightradar24-api-url": "",
+  "flightradar24-api-url": "fetch-aircraft-track.php",
   "flightradar24-refresh-ms": 45000,
   "ignscan25-hash-key": "",
   "force-offline": false,
@@ -24,5 +24,8 @@
     }
   },
   "maintenance": false,
-  "software-version": "1.0"
+  "software-version": "1.0",
+  "aircraft-track-api-url": "fetch-aircraft-track.php",
+  "aircraft-track-refresh-ms": 45000,
+  "show-all-aircraft": false
 }
