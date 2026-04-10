@@ -38,15 +38,17 @@ if (!@move_uploaded_file($_FILES['xlsx']['tmp_name'], $xlsxPath)) {
 
 $commands = [
     'soffice',
+    'libreoffice',
     '/usr/bin/soffice',
     '/usr/local/bin/soffice',
-    'libreoffice'
+    'C:\Program Files\LibreOffice\program\soffice.exe',
+    'C:\Program Files (x86)\LibreOffice\program\soffice.exe'
 ];
 
 $converted = false;
 foreach ($commands as $bin) {
-    $cmd = escapeshellcmd($bin)
-      . ' --headless --convert-to pdf --outdir '
+    $cmd = escapeshellarg($bin)
+      . ' --headless --nologo --nodefault --convert-to pdf --outdir '
       . escapeshellarg($tmpRoot) . ' '
       . escapeshellarg($xlsxPath) . ' 2>&1';
     $out = [];
