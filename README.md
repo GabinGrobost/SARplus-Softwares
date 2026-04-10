@@ -95,6 +95,12 @@ Exemple :
 }
 ```
 
+Pour afficher tous les avions en direct sur la carte, ajouter aussi :
+
+```json
+"show-all-aircraft": true
+```
+
 ---
 
 ## API locales (PHP)
@@ -103,6 +109,7 @@ Exemple :
 - `POST /save-op-active.php` : enregistre l'opération active et archive les opérations clôturées.
 - `POST /prepare-local-basemap.php` : crée/remplit le cache de tuiles locales.
 - `GET /fetch-aircraft-track.php?registration=F-XXXX` : récupère la position avion via ADSB.lol + OpenSky.
+- `GET /fetch-aircraft-track.php?all=1` : récupère un snapshot global des avions (utilisé quand `show-all-aircraft=true`).
 
 > Important : ces endpoints nécessitent un serveur web avec PHP activé.
 

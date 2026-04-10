@@ -26,5 +26,6 @@
   "maintenance": false,
   "software-version": "1.0",
   "aircraft-track-api-url": "fetch-aircraft-track.php",
-  "aircraft-track-refresh-ms": 45000
+  "aircraft-track-refresh-ms": 45000,
+  "show-all-aircraft": false
 }

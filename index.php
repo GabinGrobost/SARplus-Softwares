@@ -3292,7 +3292,8 @@ const runtimeConfig = {
     bounds: { north: 51.2, south: 41.2, west: -5.8, east: 9.8 }
   },
   maintenance: false,
-  softwareVersion: '1.0'
+  softwareVersion: '1.0',
+  showAllAircraft: false
 };
 
 function applyRuntimeConfig() {
@@ -3352,6 +3353,7 @@ async function loadRuntimeConfig() {
     );
     runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
     runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
+    runtimeConfig.showAllAircraft = !!(cfg['show-all-aircraft'] ?? cfg.showAllAircraft ?? runtimeConfig.showAllAircraft);
   } catch (e) {
     console.warn('[CartoFLU] config.json non chargé :', e);
   }
@@ -3361,6 +3363,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await hydrateActiveOperationFromServer();
   await loadRuntimeConfig();
   applyRuntimeConfig();
+  if (runtimeConfig.showAllAircraft) startFlightRadarTracking();
   refreshBasemapSelectOptions();
   await startInitialInternetAccessCheck();
   updateSidebarToggleButton();
@@ -4134,6 +4137,20 @@ function normalizeTrackPoints(points = []) {
     .filter(Boolean);
 }
 
+function normalizeAircraftPoints(points = []) {
+  if (!Array.isArray(points)) return [];
+  return points
+    .map(p => {
+      const lat = Number(p?.lat ?? p?.latitude);
+      const lon = Number(p?.lon ?? p?.lng ?? p?.longitude);
+      const registration = String(p?.registration || '').trim().toUpperCase();
+      const callsign = String(p?.callsign || '').trim().toUpperCase();
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return { lat, lon, registration, callsign };
+    })
+    .filter(Boolean);
+}
+
 function clearFlightRadarOverlay() {
   flightradarLayer.clearLayers();
 }
@@ -4149,6 +4166,7 @@ function normalizeFlightRadarSnapshot(snapshot = {}) {
   const cpLon = Number(snapshot?.currentPosition?.lon);
   const lkLat = Number(snapshot?.lastKnownPosition?.lat);
   const lkLon = Number(snapshot?.lastKnownPosition?.lon);
+  const allAircraft = normalizeAircraftPoints(snapshot?.allAircraft || []);
   return {
     registration,
     plannedTrack,
@@ -4157,6 +4175,7 @@ function normalizeFlightRadarSnapshot(snapshot = {}) {
     radarLost,
     currentPosition: Number.isFinite(cpLat) && Number.isFinite(cpLon) ? { lat: cpLat, lon: cpLon } : null,
     lastKnownPosition: Number.isFinite(lkLat) && Number.isFinite(lkLon) ? { lat: lkLat, lon: lkLon } : null,
+    allAircraft,
     updatedAt: snapshot.updatedAt || new Date().toISOString()
   };
 }
@@ -4190,8 +4209,24 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
   const planned = normalizeTrackPoints(flightData.plannedTrack || flightData.route || []);
   const past = normalizeTrackPoints(flightData.pastTrack || flightData.trail || []);
   const current = normalizeTrackPoints(flightData.currentTrack || flightData.futureTrack || []);
+  const allAircraft = normalizeAircraftPoints(flightData.allAircraft || []);
   const lastKnown = flightData.lastKnownPosition || flightData.lastKnown || null;
   const radarLost = !!(flightData.radarLost || flightData.lost || flightData.isLost);
+
+  if (allAircraft.length > 0) {
+    const icon = L.divIcon({
+      className: 'plane-snapshot-icon',
+      html: '<div style="font-size:13px;line-height:1;opacity:.9;filter:drop-shadow(0 0 1px #000)">✈</div>',
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    });
+    allAircraft.forEach(ac => {
+      const label = ac.registration || ac.callsign || 'Avion';
+      L.marker([ac.lat, ac.lon], { icon })
+        .bindPopup(`<div class="popup-title">✈ ${escapeHtml(label)}</div>`)
+        .addTo(flightradarLayer);
+    });
+  }
 
   if (planned.length >= 2) {
     L.polyline(planned, { color: '#6cb2ff', weight: 2.5, dashArray: '8 6', opacity: 0.85 }).addTo(flightradarLayer);
@@ -4247,6 +4282,7 @@ function drawFlightRadarOverlay(flightData = {}, registration = '') {
           lon: Number(lastKnown?.lon ?? lastKnown?.lng ?? lastKnown?.longitude)
         }
       : null,
+    allAircraft,
     updatedAt: new Date().toISOString()
   });
 }
@@ -4259,17 +4295,21 @@ function normalizeFlightradarResponse(raw = {}) {
     currentTrack: data?.currentTrack || data?.projectedTrack || data?.trackCurrent || [],
     currentPosition: data?.currentPosition || data?.position || null,
     radarLost: !!(data?.radarLost || data?.lost || data?.isLost),
-    lastKnownPosition: data?.lastKnownPosition || data?.lastKnown || null
+    lastKnownPosition: data?.lastKnownPosition || data?.lastKnown || null,
+    allAircraft: data?.allAircraft || []
   };
 }
 
-async function fetchFlightRadarTrack(registration = '') {
+async function fetchFlightRadarTrack(registration = '', options = {}) {
   const reg = String(registration || '').trim().toUpperCase();
-  if (!reg) return null;
+  const all = !!options.all;
+  if (!all && !reg) return null;
   const baseUrl = (runtimeConfig.flightradar24ApiUrl || '').trim();
   if (!baseUrl) return null;
   const sep = baseUrl.includes('?') ? '&' : '?';
-  const url = `${baseUrl}${sep}registration=${encodeURIComponent(reg)}`;
+  const url = all
+    ? `${baseUrl}${sep}all=1`
+    : `${baseUrl}${sep}registration=${encodeURIComponent(reg)}`;
   const resp = await fetch(url, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const raw = await resp.json();
@@ -4277,6 +4317,20 @@ async function fetchFlightRadarTrack(registration = '') {
 }
 
 async function refreshFlightRadarTracking() {
+  if (runtimeConfig.showAllAircraft) {
+    try {
+      const allData = await fetchFlightRadarTrack('', { all: true });
+      if (!allData) {
+        clearFlightRadarOverlay();
+        return;
+      }
+      drawFlightRadarOverlay(allData, 'TOUS LES AVIONS');
+    } catch (e) {
+      console.warn('[CartoFLU] Snapshot ADSB indisponible :', e);
+    }
+    return;
+  }
+
   if (!hasActiveOperation()) {
     stopFlightRadarTracking();
     return;
@@ -5158,7 +5212,7 @@ async function closeOperation() {
     closedAt: new Date().toISOString()
   };
   currentSarOperation = null;
-  stopFlightRadarTracking();
+  if (!runtimeConfig.showAllAircraft) stopFlightRadarTracking();
   closeSarOperationOverlay();
   closeSarOfflineModal();
   closeArchivedOperationsModal();

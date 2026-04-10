@@ -10,8 +10,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
+$allAircraft = isset($_GET['all']) && ($_GET['all'] === '1' || strtolower((string)$_GET['all']) === 'true');
 $registration = strtoupper(trim((string)($_GET['registration'] ?? '')));
-if ($registration === '') {
+if (!$allAircraft && $registration === '') {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Missing registration query parameter.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
@@ -99,6 +100,58 @@ function normalize_track_points($raw): array
         }
     }
     return $points;
+}
+
+function normalize_all_aircraft(array $payload, int $limit = 250): array
+{
+    $entries = [];
+    foreach (['ac', 'aircraft', 'data'] as $key) {
+        if (isset($payload[$key]) && is_array($payload[$key])) {
+            $entries = $payload[$key];
+            break;
+        }
+    }
+
+    $out = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) continue;
+        $point = point_from_entry($entry);
+        if ($point === null) continue;
+        $out[] = [
+            'lat' => $point['lat'],
+            'lon' => $point['lon'],
+            'registration' => strtoupper(trim((string)($entry['r'] ?? $entry['registration'] ?? ''))),
+            'icao24' => strtolower(trim((string)($entry['hex'] ?? $entry['icao24'] ?? ''))),
+            'callsign' => strtoupper(trim((string)($entry['flight'] ?? $entry['callsign'] ?? ''))),
+        ];
+        if (count($out) >= $limit) break;
+    }
+    return $out;
+}
+
+if ($allAircraft) {
+    $snapshot = http_get_json('https://api.adsb.lol/v2/snapshot', 10);
+    if (!$snapshot) {
+        http_response_code(502);
+        echo json_encode(['ok' => false, 'error' => 'Unable to fetch ADSB snapshot'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    echo json_encode([
+        'plannedTrack' => [],
+        'pastTrack' => [],
+        'currentTrack' => [],
+        'currentPosition' => null,
+        'radarLost' => false,
+        'lastKnownPosition' => null,
+        'allAircraft' => normalize_all_aircraft($snapshot, 300),
+        'source' => [
+            'primary' => 'adsb.lol',
+            'mode' => 'snapshot'
+        ],
+        'updatedAt' => gmdate('c')
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
 
 $adsbUrl = 'https://api.adsb.lol/v2/registration/' . rawurlencode($registration);
