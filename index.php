@@ -5542,7 +5542,6 @@ function loadMemberListData(data, filename = 'member-list.json') {
 
   callsigns.forEach(cs => rollcallEnsureUnchecked(cs));
 
-  notify(`📋 ${callsigns.length} station(s) chargée(s) depuis ${filename} ✓`);
   return true;
 }
 
