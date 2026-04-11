@@ -34,6 +34,7 @@ Le projet fonctionne en **mode autonome** (intranet SAR BOX) et reste exploitabl
 ### APRS & configuration
 - Intégration APRS.fi via clé API.
 - Sauvegarde de configuration via `save-config.php` vers `config.json`.
+- Interconnexion inter-entités via `interconnect-api.php` (publication + consultation des opérations en cours).
 
 ### Hors-ligne
 - Bascule vers tuiles locales si indisponibilité réseau.
@@ -50,6 +51,7 @@ Le projet fonctionne en **mode autonome** (intranet SAR BOX) et reste exploitabl
 ├── config.json                  # Configuration runtime
 ├── save-config.php              # API de sauvegarde config
 ├── save-op-active.php           # API de sauvegarde opération active
+├── interconnect-api.php         # Proxy API d'interconnexion multi-entités
 ├── prepare-local-basemap.php    # API de préchargement tuiles locales
 ├── op-active.json               # État opération en cours
 ├── op-inactive.json             # Historique opérations clôturées
@@ -99,7 +101,15 @@ Exemple :
 
 - `POST /save-config.php` : enregistre la configuration applicative.
 - `POST /save-op-active.php` : enregistre l'opération active et archive les opérations clôturées.
+- `POST /interconnect-api.php` : publie les ouvertures/mises à jour/clôtures et récupère les opérations distantes en cours.
 - `POST /prepare-local-basemap.php` : crée/remplit le cache de tuiles locales.
+
+Configuration attendue dans `config.json` pour l'interconnexion :
+
+```json
+"interconnect-api-url": "https://votre-api-sar.example.net/interconnect",
+"interconnect-fetch-timeout-ms": 6000
+```
 
 > Important : ces endpoints nécessitent un serveur web avec PHP activé.
 

@@ -3296,7 +3296,9 @@ const runtimeConfig = {
   },
   maintenance: false,
   softwareVersion: '1.0',
-  showAllAircraft: false
+  showAllAircraft: false,
+  interconnectApiUrl: '',
+  interconnectFetchTimeoutMs: 6000
 };
 
 function applyRuntimeConfig() {
@@ -3357,6 +3359,19 @@ async function loadRuntimeConfig() {
     runtimeConfig.maintenance = !!(cfg.maintenance ?? cfg.mantenance ?? runtimeConfig.maintenance);
     runtimeConfig.softwareVersion = String(cfg['software-version'] ?? cfg.softwareVersion ?? runtimeConfig.softwareVersion);
     runtimeConfig.showAllAircraft = !!(cfg['show-all-aircraft'] ?? cfg.showAllAircraft ?? runtimeConfig.showAllAircraft);
+    runtimeConfig.interconnectApiUrl = String(
+      cfg['interconnect-api-url']
+      ?? cfg.interconnectApiUrl
+      ?? runtimeConfig.interconnectApiUrl
+    ).trim();
+    runtimeConfig.interconnectFetchTimeoutMs = Math.max(
+      1500,
+      Number(
+        cfg['interconnect-fetch-timeout-ms']
+        ?? cfg.interconnectFetchTimeoutMs
+        ?? runtimeConfig.interconnectFetchTimeoutMs
+      ) || 6000
+    );
   } catch (e) {
     console.warn('[CartoFLU] config.json non chargé :', e);
   }
@@ -3691,6 +3706,7 @@ let _allowReadOnlyMutation = false;
 const OPERATION_REF_PLACE_CODE = '25';
 const OP_ACTIVE_RETRY_BASE_MS = 3000;
 const OP_ACTIVE_RETRY_MAX_MS = 60000;
+const INTERCONNECT_ENDPOINT = 'interconnect-api.php';
 
 
 function hasActiveOperation() {
@@ -3795,6 +3811,94 @@ function buildOpActivePayload(source = 'ui') {
   };
 }
 
+function canUseInterconnectApi() {
+  return !!runtimeConfig.interconnectApiUrl && location.protocol !== 'file:';
+}
+
+function buildInterconnectEnvelope(kind = 'op-active', payload = {}, opts = {}) {
+  return {
+    version: 1,
+    kind,
+    app: 'CartoFLU',
+    updatedAt: new Date().toISOString(),
+    entity: {
+      name: runtimeConfig.entityName || '',
+      departement: runtimeConfig.departementCode || ''
+    },
+    source: {
+      path: location.pathname || '/',
+      mode: sarOperationMode || 'connected',
+      syncSource: opts.syncSource || 'ui'
+    },
+    payload
+  };
+}
+
+async function postInterconnectEnvelope(envelope, action = 'publish') {
+  if (!canUseInterconnectApi() || !navigator.onLine) return false;
+  const timeoutMs = Math.max(1500, Number(runtimeConfig.interconnectFetchTimeoutMs) || 6000);
+  try {
+    const resp = await fetch(INTERCONNECT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, envelope }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return true;
+  } catch (e) {
+    console.warn('[CartoFLU] Publication interconnexion impossible :', e);
+    return false;
+  }
+}
+
+function getInterconnectEventTypeFromSyncSource(source = '') {
+  if (String(source).startsWith('operation-opened')) return 'operation-opened';
+  if (String(source).startsWith('operation-closed')) return 'operation-closed';
+  return 'op-active-duplicate';
+}
+
+async function publishInterconnectFromOpActive(payload, syncSource = 'ui') {
+  if (!payload || !canUseInterconnectApi() || !navigator.onLine) return;
+  const envelope = buildInterconnectEnvelope('operation-interconnect', {
+    eventType: getInterconnectEventTypeFromSyncSource(syncSource),
+    operationForm: payload.operationForm || {},
+    opActiveDuplicate: payload,
+    operation: payload.operation || null
+  }, { syncSource });
+  await postInterconnectEnvelope(envelope, 'publish');
+}
+
+async function fetchInterconnectActiveOperations() {
+  if (!canUseInterconnectApi() || !navigator.onLine) return [];
+  const timeoutMs = Math.max(1500, Number(runtimeConfig.interconnectFetchTimeoutMs) || 6000);
+  try {
+    const resp = await fetch(INTERCONNECT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'list-active',
+        envelope: buildInterconnectEnvelope('operation-interconnect-query', {
+          excludeEntity: runtimeConfig.entityName || '',
+          excludeDepartement: runtimeConfig.departementCode || ''
+        }, { syncSource: 'join-operation' })
+      }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const ops = Array.isArray(data?.operations) ? data.operations : [];
+    return ops.filter(op => {
+      const sameEntity = String(op?.entityName || '').trim() === String(runtimeConfig.entityName || '').trim();
+      const sameDept = String(op?.departement || '').trim() === String(runtimeConfig.departementCode || '').trim();
+      return !(sameEntity && sameDept);
+    });
+  } catch (e) {
+    console.warn('[CartoFLU] Lecture interconnexion impossible :', e);
+    return [];
+  }
+}
+
 async function flushOpActiveSync(source = 'ui') {
   if (_opActiveSyncInFlight) return;
   if (_opActiveSyncDisabledReason) return;
@@ -3821,6 +3925,7 @@ async function flushOpActiveSync(source = 'ui') {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     _opActiveLastPayload = payloadText;
     localStorage.removeItem(OP_ACTIVE_PENDING_KEY);
+    publishInterconnectFromOpActive(payload, source).catch(() => {});
     if (_opActiveRetryTimer) {
       clearTimeout(_opActiveRetryTimer);
       _opActiveRetryTimer = null;
@@ -5554,7 +5659,30 @@ async function openArchivedOperationByRef(ref) {
 
 async function joinOperation() {
   closePcMenu();
-  notify('ℹ️ "Rejoindre une opération" est réservé à une future interconnexion');
+  if (!canUseInterconnectApi()) {
+    notify('ℹ️ Interconnexion inactive (config interconnect-api-url absente)', true);
+    return;
+  }
+  if (!navigator.onLine) {
+    notify('⚠ Hors-ligne : impossible de charger les opérations des autres entités', true);
+    return;
+  }
+  const operations = await fetchInterconnectActiveOperations();
+  if (!operations.length) {
+    notify('ℹ️ Aucune opération distante en cours trouvée');
+    return;
+  }
+  const preview = operations
+    .slice(0, 5)
+    .map(op => {
+      const ref = (op?.ref || op?.operation?.ref || '—').toString().trim() || '—';
+      const name = (op?.name || op?.operation?.name || 'Sans nom').toString().trim() || 'Sans nom';
+      const entity = (op?.entityName || op?.entity?.name || 'Entité inconnue').toString().trim() || 'Entité inconnue';
+      const dept = (op?.departement || op?.entity?.departement || '--').toString().trim() || '--';
+      return `${ref} • ${name} (${entity} / ${dept})`;
+    })
+    .join(' | ');
+  notify(`🌐 ${operations.length} opération(s) distante(s) détectée(s) : ${preview}`);
 }
 
 async function closeOperation() {
