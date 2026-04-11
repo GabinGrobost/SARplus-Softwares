@@ -99,6 +99,19 @@ function http_get_json_first(array $urls, int $timeout = 8, ?string &$resolvedUr
     return null;
 }
 
+function fetch_json_from_urls(array $urls, int $timeout = 8): array
+{
+    $out = [];
+    foreach ($urls as $url) {
+        if (!is_string($url) || trim($url) === '') continue;
+        $payload = http_get_json($url, $timeout);
+        if (is_array($payload)) {
+            $out[] = ['url' => $url, 'payload' => $payload];
+        }
+    }
+    return $out;
+}
+
 function aircraft_candidates_from_payload(array $payload): array
 {
     foreach (['ac', 'aircraft', 'data', 'response', 'list'] as $key) {
@@ -156,6 +169,86 @@ function point_from_entry(array $entry): ?array
 
     if (!is_finite($lat) || !is_finite($lon)) return null;
     return ['lat' => $lat, 'lon' => $lon];
+}
+
+function seen_pos_from_entry(array $entry): ?float
+{
+    if (isset($entry['seen_pos']) && is_numeric($entry['seen_pos'])) {
+        return (float)$entry['seen_pos'];
+    }
+    if (isset($entry['seen']) && is_numeric($entry['seen'])) {
+        return (float)$entry['seen'];
+    }
+    return null;
+}
+
+function distance_nm(float $lat1, float $lon1, float $lat2, float $lon2): float
+{
+    $earthRadiusKm = 6371.0;
+    $lat1Rad = deg2rad($lat1);
+    $lat2Rad = deg2rad($lat2);
+    $deltaLat = deg2rad($lat2 - $lat1);
+    $deltaLon = deg2rad($lon2 - $lon1);
+
+    $a = sin($deltaLat / 2.0) ** 2
+        + cos($lat1Rad) * cos($lat2Rad) * (sin($deltaLon / 2.0) ** 2);
+    $c = 2.0 * atan2(sqrt($a), sqrt(max(0.0, 1.0 - $a)));
+    $distanceKm = $earthRadiusKm * $c;
+    return $distanceKm / 1.852;
+}
+
+function stable_position_from_candidates(array $candidates): ?array
+{
+    $positions = [];
+    foreach ($candidates as $candidate) {
+        if (!isset($candidate['position']) || !is_array($candidate['position'])) continue;
+        $p = $candidate['position'];
+        if (!isset($p['lat'], $p['lon'])) continue;
+        $positions[] = [
+            'lat' => (float)$p['lat'],
+            'lon' => (float)$p['lon'],
+            'seen_pos' => isset($candidate['seen_pos']) && is_numeric($candidate['seen_pos']) ? (float)$candidate['seen_pos'] : null
+        ];
+    }
+    if ($positions === []) return null;
+    if (count($positions) === 1) return ['lat' => $positions[0]['lat'], 'lon' => $positions[0]['lon'], 'consensus' => 1];
+
+    $consensusRadiusNm = 1.2;
+    $best = null;
+    foreach ($positions as $pivot) {
+        $cluster = [];
+        foreach ($positions as $other) {
+            $dist = distance_nm($pivot['lat'], $pivot['lon'], $other['lat'], $other['lon']);
+            if ($dist <= $consensusRadiusNm) {
+                $cluster[] = $other;
+            }
+        }
+        if ($best === null || count($cluster) > count($best)) {
+            $best = $cluster;
+        }
+    }
+
+    if (is_array($best) && count($best) >= 2) {
+        $sumLat = 0.0;
+        $sumLon = 0.0;
+        foreach ($best as $member) {
+            $sumLat += $member['lat'];
+            $sumLon += $member['lon'];
+        }
+        return [
+            'lat' => $sumLat / count($best),
+            'lon' => $sumLon / count($best),
+            'consensus' => count($best)
+        ];
+    }
+
+    usort($positions, function (array $a, array $b): int {
+        $av = isset($a['seen_pos']) && $a['seen_pos'] !== null ? (float)$a['seen_pos'] : INF;
+        $bv = isset($b['seen_pos']) && $b['seen_pos'] !== null ? (float)$b['seen_pos'] : INF;
+        return $av <=> $bv;
+    });
+
+    return ['lat' => $positions[0]['lat'], 'lon' => $positions[0]['lon'], 'consensus' => 1];
 }
 
 function normalize_track_points($raw): array
@@ -309,16 +402,36 @@ if ($allAircraft) {
     ]);
 }
 
-$adsbUrl = null;
-$adsbPayload = http_get_json_first([
+$registrationLookupUrls = [
     'https://opendata.adsb.fi/api/v2/registration/' . rawurlencode($registration),
     'https://api.airplanes.live/v2/reg/' . rawurlencode($registration),
     'https://api.adsb.lol/v2/registration/' . rawurlencode($registration)
-], 9, $adsbUrl);
-$adsbAircraft = is_array($adsbPayload) ? pick_first_aircraft($adsbPayload, $registration) : null;
-$adsbSource = $adsbUrl && str_contains($adsbUrl, 'opendata.adsb.fi')
-    ? 'adsb.fi-opendata'
-    : ($adsbUrl && str_contains($adsbUrl, 'airplanes.live') ? 'airplanes.live' : ($adsbUrl ? 'adsb.lol' : ''));
+];
+$registrationLookups = fetch_json_from_urls($registrationLookupUrls, 9);
+
+$adsbAircraft = null;
+$adsbSource = '';
+$aircraftCandidates = [];
+foreach ($registrationLookups as $lookup) {
+    $url = (string)($lookup['url'] ?? '');
+    $payload = isset($lookup['payload']) && is_array($lookup['payload']) ? $lookup['payload'] : [];
+    $entry = pick_first_aircraft($payload, $registration);
+    if (!is_array($entry)) continue;
+
+    $sourceLabel = str_contains($url, 'opendata.adsb.fi')
+        ? 'adsb.fi-opendata'
+        : (str_contains($url, 'airplanes.live') ? 'airplanes.live' : 'adsb.lol');
+    $aircraftCandidates[] = [
+        'source' => $sourceLabel,
+        'entry' => $entry,
+        'position' => point_from_entry($entry),
+        'seen_pos' => seen_pos_from_entry($entry),
+    ];
+    if ($adsbAircraft === null) {
+        $adsbAircraft = $entry;
+        $adsbSource = $sourceLabel;
+    }
+}
 
 if (!$adsbAircraft) {
     empty_aircraft_response($registration, 'aircraft-not-found', [
@@ -332,6 +445,14 @@ $currentPosition = point_from_entry($adsbAircraft);
 $pastTrack = normalize_track_points($adsbAircraft['track'] ?? $adsbAircraft['trail'] ?? $adsbAircraft['history'] ?? []);
 $radarLost = $currentPosition === null;
 $lastKnown = $pastTrack !== [] ? $pastTrack[count($pastTrack) - 1] : null;
+$stable = stable_position_from_candidates($aircraftCandidates);
+if (is_array($stable) && isset($stable['lat'], $stable['lon'])) {
+    $currentPosition = ['lat' => (float)$stable['lat'], 'lon' => (float)$stable['lon']];
+    if ($pastTrack === [] || (abs($pastTrack[count($pastTrack) - 1]['lat'] - $currentPosition['lat']) > 0.000001 || abs($pastTrack[count($pastTrack) - 1]['lon'] - $currentPosition['lon']) > 0.000001)) {
+        $pastTrack[] = $currentPosition;
+    }
+    $radarLost = false;
+}
 
 if ($icao24 !== '') {
     $openSkyUrl = 'https://opensky-network.org/api/states/all?icao24=' . rawurlencode($icao24);
@@ -368,6 +489,11 @@ $response = [
         'primary' => $adsbSource !== '' ? $adsbSource : 'adsb-registration-lookup',
         'fallback' => 'opensky-network',
         'icao24' => $icao24,
+        'crossCheckSources' => array_values(array_unique(array_map(function (array $row): string {
+            return (string)($row['source'] ?? '');
+        }, $aircraftCandidates))),
+        'crossCheckCount' => count($aircraftCandidates),
+        'positionConsensus' => is_array($stable) ? (int)($stable['consensus'] ?? 1) : 0,
     ],
     'callsign' => strtoupper(trim((string)($adsbAircraft['flight'] ?? $adsbAircraft['callsign'] ?? ''))),
     'altitude' => $adsbAircraft['alt_baro'] ?? $adsbAircraft['alt_geom'] ?? $adsbAircraft['altitude'] ?? null,
