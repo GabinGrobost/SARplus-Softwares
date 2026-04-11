@@ -3808,13 +3808,15 @@ async function flushOpActiveSync(source = 'ui') {
   if (!payload) return;
   const payloadText = JSON.stringify(payload);
   if (payloadText === _opActiveLastPayload) return;
+  const payloadBytes = new TextEncoder().encode(payloadText).length;
+  const useKeepAlive = source === 'beforeunload' && payloadBytes <= 60 * 1024;
   _opActiveSyncInFlight = true;
   try {
     const resp = await fetch(OP_ACTIVE_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payloadText,
-      keepalive: true
+      keepalive: useKeepAlive
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     _opActiveLastPayload = payloadText;
@@ -3850,8 +3852,7 @@ async function flushPendingOpActiveSync(source = 'pending-retry') {
     const resp = await fetch(OP_ACTIVE_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: pendingPayloadText,
-      keepalive: true
+      body: pendingPayloadText
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     _opActiveLastPayload = pendingPayloadText;
