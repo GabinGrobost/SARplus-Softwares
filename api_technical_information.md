@@ -1,93 +1,135 @@
-# CartoFLU — Spécification technique API d'interconnexion (niveau avancé)
+# CartoFLU — Manuel d’ingénierie pour construire le serveur API d’interconnexion
 
-> Public visé : ingénieurs backend, architectes API, DevOps/SRE.
->
-> Ce document décrit **le contrat attendu par le client CartoFLU** pour l'interconnexion multi-entités, ainsi que les recommandations pour une implémentation robuste et évolutive.
-
----
-
-## 1) Vue d'ensemble du flux
-
-### 1.1 Architecture côté client
-
-Le client web n'appelle pas directement l'API distante :
-
-1. `index.php` (JavaScript) envoie une requête `POST` à `interconnect-api.php` (local).
-2. `interconnect-api.php` relaie vers l'API distante configurée (`config.json > interconnect-api-url`).
-3. La réponse distante est renvoyée au front.
-
-### 1.2 Actions utilisées par le client
-
-Le client envoie uniquement deux actions :
-
-- `publish` : publication événementielle d'ouverture / mise à jour duplicative / clôture.
-- `list-active` : lecture des opérations actives distantes.
+> **Audience** : architectes logiciels, ingénieurs backend senior/staff, SRE, sécurité, DBA.  
+> **Objet** : ce document est **exclusivement dédié à la conception, l’implémentation et l’exploitation** d’un serveur API compatible CartoFLU (multi-entités, multi-sites, résilient et évolutif).
 
 ---
 
-## 2) Contrat HTTP côté API distante
+## Sommaire
 
-## 2.1 Endpoint unique (actuel)
+1. Objectifs et périmètre serveur  
+2. Contrat fonctionnel exact attendu par les clients  
+3. Architecture de référence (monolithe, modulaires, event-driven)  
+4. Spécification HTTP/JSON complète  
+5. Validation des payloads et gouvernance de schéma  
+6. Modélisation de données (SQL + NoSQL)  
+7. Pipeline d’ingestion d’événements et projection `active_operations`  
+8. Idempotence, ordering, concurrence et cohérence  
+9. Sécurité (AuthN/AuthZ, hardening, conformité)  
+10. Observabilité, métriques, logs, traces, alerting  
+11. Performance, capacité, dimensionnement et SLO/SLA  
+12. Déploiement (single-node → HA multi-région)  
+13. Plan de tests (unitaires, contrats, charge, chaos, sec)  
+14. Plan de migration/versionnement/protocole d’évolution  
+15. Runbooks d’exploitation et incidents majeurs  
+16. OpenAPI et exemples d’implémentation  
+17. Annexes (JSON Schema, DDL SQL, checklist prod)
 
-Le proxy local envoie vers **une URL unique** :
+---
 
-- `POST https://<host>/interconnect` (exemple)
+## 1) Objectifs et périmètre serveur
 
-`Content-Type: application/json`
+### 1.1 Objectifs métier
 
-Payload générique :
+Le serveur API interconnecte des instances CartoFLU déployées sur des postes / réseaux distincts pour :
+
+- recevoir des publications d’événements opérationnels (`publish`) ;
+- maintenir une vision cohérente des opérations **actives** ;
+- servir une liste d’opérations distantes (`list-active`) ;
+- tolérer des clients hétérogènes et versions différentes.
+
+### 1.2 Hors périmètre
+
+- authentification utilisateur CartoFLU (UI) ;
+- messagerie temps réel opérateur-opérateur (chat/voix) ;
+- stockage média volumineux (photos/vidéo).  
+
+---
+
+## 2) Contrat fonctionnel exact attendu par les clients
+
+Le client CartoFLU envoie vers un proxy local, qui appelle une URL distante unique. Côté serveur distant, le contrat v1 est :
+
+- méthode : `POST`
+- body JSON :
 
 ```json
 {
-  "action": "publish|list-active",
+  "action": "publish | list-active",
   "envelope": { "...": "..." }
 }
 ```
 
-### 2.2 Réponses minimales attendues
+Le client s’attend à :
 
-- Pour `publish` : tout JSON valide avec code HTTP 2xx.
-- Pour `list-active` : JSON contenant `operations` de type tableau.
+- `publish` → réponse HTTP 2xx + JSON valide ;
+- `list-active` → réponse HTTP 2xx + `{ "operations": [] }`.
 
-Exemple :
-
-```json
-{
-  "ok": true,
-  "operations": []
-}
-```
+> Contrat de robustesse recommandé : toujours renvoyer `{ "ok": boolean, "requestId": "..." }`.
 
 ---
 
-## 3) Schéma `envelope` envoyé par le client
+## 3) Architecture de référence
 
-## 3.1 Tronc commun
+## 3.1 Variante A — Monolithe transactionnel (MVP robuste)
 
-```json
-{
-  "version": 1,
-  "kind": "operation-interconnect | operation-interconnect-query",
-  "app": "CartoFLU",
-  "updatedAt": "2026-04-11T10:15:00.000Z",
-  "entity": {
-    "name": "ADRASEC 25",
-    "departement": "25"
-  },
-  "source": {
-    "path": "/",
-    "mode": "connected | degraded",
-    "syncSource": "operation-opened-immediate | operation-form-updated | operation-closed-immediate | ..."
-  },
-  "payload": {}
-}
-```
+Composants :
+
+- API HTTP (REST minimal) ;
+- base PostgreSQL ;
+- worker interne pour projections ;
+- cache Redis (optionnel).
+
+Avantages : simplicité, time-to-market rapide, opérations faciles.
+
+## 3.2 Variante B — Event-driven (échelle / audit avancé)
+
+Composants :
+
+- API Gateway + Service Ingest ;
+- bus (Kafka/NATS/RabbitMQ) ;
+- service de projection `active_operations` ;
+- service de requête ;
+- data lake/audit.
+
+Avantages : scalabilité horizontale, replay, analytics, DR.
+
+## 3.3 Recommandation pragmatique
+
+- Démarrer en A avec patterns B (event log immuable + projections) ;
+- Conserver un format d’événement stable dès J1 ;
+- Introduire bus ultérieurement sans casser le contrat client.
 
 ---
 
-## 4) Action `publish`
+## 4) Spécification HTTP/JSON complète
 
-## 4.1 Payload effectif envoyé
+## 4.1 Endpoint unique v1
+
+`POST /interconnect`
+
+Headers :
+
+- `Content-Type: application/json`
+- `Accept: application/json`
+- `Authorization: Bearer <token>` (recommandé)
+- `X-Request-Id: <uuid>` (recommandé)
+
+### Réponses standardisées
+
+- 200 OK : requête traitée
+- 202 Accepted : traitement asynchrone accepté
+- 400 Bad Request : JSON invalide / schéma invalide
+- 401 Unauthorized : token absent/invalide
+- 403 Forbidden : client non autorisé
+- 409 Conflict : conflit logique (rare)
+- 413 Payload Too Large
+- 429 Too Many Requests
+- 500/502/503/504 erreurs serveur/infra
+
+## 4.2 Action `publish`
+
+### Requête
 
 ```json
 {
@@ -107,58 +149,33 @@ Exemple :
       "syncSource": "operation-opened-immediate"
     },
     "payload": {
-      "eventType": "operation-opened | op-active-duplicate | operation-closed",
-      "operationForm": {
-        "name": "Nom opération",
-        "ref": "2604110001",
-        "type": "SATER",
-        "aircraftRegistration": "",
-        "exercise": "non",
-        "sizing": "Départemental",
-        "openingAuthority": "oui",
-        "openingAuthorityLabel": "Ouverture COD ?"
-      },
-      "opActiveDuplicate": {
-        "version": 1,
-        "kind": "op-active",
-        "app": "CartoFLU",
-        "active": true,
-        "updatedAt": "2026-04-11T10:15:00.000Z",
-        "operation": {},
-        "operationForm": {},
-        "rollcall": {},
-        "session": {},
-        "sync": {}
-      },
+      "eventType": "operation-opened",
+      "operationForm": {},
+      "opActiveDuplicate": {},
       "operation": {
-        "name": "Nom opération",
         "ref": "2604110001",
-        "type": "SATER",
-        "exercise": "non",
-        "sizing": "Départemental",
-        "openingAuthority": "oui",
-        "openingAuthorityLabel": "Ouverture COD ?",
-        "mode": "connected",
-        "createdAt": "2026-04-11T10:14:00.000Z"
+        "name": "SATER Doubs",
+        "type": "SATER"
       }
     }
   }
 }
 ```
 
-## 4.2 Sémantique événementielle
+### Réponse recommandée
 
-- `operation-opened` : première publication d'ouverture.
-- `op-active-duplicate` : snapshot complet de duplication (mise à jour continue).
-- `operation-closed` : publication de clôture.
+```json
+{
+  "ok": true,
+  "requestId": "c5e53a66-1f18-4c62-bdb2-c3618e10d6d3",
+  "ingested": true,
+  "eventKey": "ADRASEC 25|25|2604110001|operation-opened|2026-04-11T10:15:00.000Z"
+}
+```
 
-> Recommandation : stocker les événements en append-only (event store) + matérialiser une vue `active_operations`.
+## 4.3 Action `list-active`
 
----
-
-## 5) Action `list-active`
-
-## 5.1 Payload de requête
+### Requête
 
 ```json
 {
@@ -185,30 +202,33 @@ Exemple :
 }
 ```
 
-## 5.2 Réponse recommandée
+### Réponse
 
 ```json
 {
   "ok": true,
+  "requestId": "ba6a2ca6-f8fd-4d11-a7db-4cb68c43da4b",
   "operations": [
     {
       "ref": "2604110007",
       "name": "SATER secteur Est",
       "entityName": "ADRASEC 39",
       "departement": "39",
+      "updatedAt": "2026-04-11T10:15:59.000Z",
       "operation": {
         "ref": "2604110007",
         "name": "SATER secteur Est",
         "type": "SATER",
         "createdAt": "2026-04-11T08:45:00.000Z"
-      },
-      "updatedAt": "2026-04-11T10:15:59.000Z"
+      }
     }
   ]
 }
 ```
 
-Le client consomme en priorité :
+### Champs effectivement utilisés par le client
+
+Le client lit prioritairement :
 
 - `ref` ou `operation.ref`
 - `name` ou `operation.name`
@@ -217,207 +237,404 @@ Le client consomme en priorité :
 
 ---
 
-## 6) Modèle de données serveur conseillé
+## 5) Validation des payloads et gouvernance de schéma
 
-## 6.1 Tables minimales (SQL)
+## 5.1 Principes
 
-- `interconnect_events`
-  - `id` (uuid)
-  - `received_at` (timestamptz)
-  - `entity_name` (text)
-  - `departement` (text)
-  - `event_type` (text)
-  - `operation_ref` (text)
-  - `payload_json` (jsonb)
+- Validation stricte sur les champs critiques, souple sur l’extensibilité.
+- Refus des payloads invalides (`400`) avec message machine-readable.
+- Conserver le payload brut validé dans l’event store.
 
-- `active_operations`
-  - `operation_ref` (pk)
-  - `entity_name` (text)
-  - `departement` (text)
-  - `operation_name` (text)
-  - `operation_json` (jsonb)
-  - `last_snapshot_json` (jsonb)
-  - `status` (active|closed)
-  - `updated_at` (timestamptz)
+## 5.2 Règles critiques de validation
 
-## 6.2 Règles de projection
+- `action` ∈ {`publish`, `list-active`}
+- `envelope.version` : entier >= 1
+- `envelope.updatedAt` : RFC3339
+- `entity.name`, `entity.departement` non vides
+- `publish.payload.eventType` ∈ {`operation-opened`, `op-active-duplicate`, `operation-closed`}
+- Taille body max recommandée : 1 MiB (ajuster selon charge)
 
-- `operation-opened` : upsert `active_operations` status=active.
-- `op-active-duplicate` : upsert + refresh du snapshot.
-- `operation-closed` : status=closed (ou suppression logique/TTL).
+## 5.3 Évolution de schéma
+
+- accepter `additionalProperties: true`
+- versionner les champs avec dépréciations documentées
+- introduire des “feature flags” côté serveur
 
 ---
 
-## 7) Idempotence, ordering, concurrence
+## 6) Modélisation de données
 
-## 7.1 Idempotence
+## 6.1 SQL (PostgreSQL) — DDL recommandé
 
-Le client peut republier un snapshot similaire. Implémenter :
+```sql
+create table if not exists interconnect_events (
+  id uuid primary key,
+  request_id uuid not null,
+  received_at timestamptz not null default now(),
+  entity_name text not null,
+  departement text not null,
+  operation_ref text,
+  event_type text,
+  envelope_updated_at timestamptz,
+  dedupe_key text not null,
+  payload_json jsonb not null
+);
 
-- clé d'idempotence dérivée :
-  - `hash(entity_name + departement + operation_ref + event_type + updatedAt)`
-- ou déduplication sur `(entity_name, operation_ref, updatedAt)`.
+create unique index if not exists ux_interconnect_events_dedupe_key
+  on interconnect_events(dedupe_key);
 
-## 7.2 Ordering
+create index if not exists ix_interconnect_events_entity_ref
+  on interconnect_events(entity_name, departement, operation_ref);
 
-Ne pas supposer un ordre réseau strict. Utiliser :
+create table if not exists active_operations (
+  entity_name text not null,
+  departement text not null,
+  operation_ref text not null,
+  operation_name text,
+  operation_type text,
+  status text not null check (status in ('active', 'closed')),
+  operation_json jsonb,
+  last_snapshot_json jsonb,
+  first_seen_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key(entity_name, departement, operation_ref)
+);
 
-- `updatedAt` dans `envelope`
+create index if not exists ix_active_operations_status_updated
+  on active_operations(status, updated_at desc);
+```
+
+## 6.2 Stratégie NoSQL alternative
+
+- Collection `events` (append-only)
+- Collection `active_operations` (projection)
+- Index composés : `(entity, departement, operation_ref)` + TTL optionnel
+
+---
+
+## 7) Pipeline d’ingestion et projection
+
+## 7.1 Étapes d’ingestion (`publish`)
+
+1. Parse/validate JSON
+2. Normaliser `requestId` et `receivedAt`
+3. Calculer `dedupe_key`
+4. Écrire `interconnect_events` (transaction)
+5. Mettre à jour projection `active_operations`
+6. Répondre 200/202
+
+## 7.2 Projection par `eventType`
+
+- `operation-opened` : upsert status=active
+- `op-active-duplicate` : refresh snapshot + updatedAt
+- `operation-closed` : status=closed (ou purge logique)
+
+## 7.3 Politique de conservation
+
+- events : 1 à 5 ans selon conformité
+- snapshots : fenêtre courte + archives froides
+
+---
+
+## 8) Idempotence, ordering, concurrence
+
+## 8.1 Dédoublonnage
+
+`dedupe_key = sha256(entity_name|departement|operation_ref|event_type|envelope.updatedAt)`
+
+Comportement :
+
+- duplicate détecté => répondre `ok=true`, `deduplicated=true`
+
+## 8.2 Ordering
+
+- ordre logique basé sur `envelope.updatedAt`
 - fallback `received_at`
-- logique "last write wins" paramétrable.
+- règle LWW configurable
 
-## 7.3 Conflits inter-entités
+## 8.3 Concurrence
 
-`operation_ref` peut potentiellement collisionner entre entités.
-Clé métier recommandée :
-
-- `(entity_name, departement, operation_ref)`.
-
----
-
-## 8) Sécurité et durcissement
-
-## 8.1 Authentification
-
-Fortement recommandé :
-
-- `Authorization: Bearer <token>`
-- rotation token + expirations courtes
-- éventuellement mTLS en environnement institutionnel.
-
-> Le client actuel ne transmet pas nativement de header d'auth côté front.
-> Deux options :
-> 1) accepter réseau privé de confiance,
-> 2) gérer les secrets côté `interconnect-api.php` (injecter header serveur-à-serveur).
-
-## 8.2 Contrôles d'entrée
-
-- limiter taille payload (ex: 1–2 MB max).
-- valider JSON schema.
-- filtrer/normaliser champs texte.
-- appliquer rate limiting par IP/site.
-
-## 8.3 Journalisation
-
-- tracer `action`, `entity`, `departement`, `operation_ref`, latence, code retour.
-- corrélation via `request_id`.
+- verrouillage applicatif léger par clé `(entity, dept, ref)`
+- transaction courte
+- retries bornés côté worker
 
 ---
 
-## 9) Versionnement et évolutivité
+## 9) Sécurité
 
-## 9.1 Version de contrat
+## 9.1 Authentification machine-to-machine
 
-Le client envoie `envelope.version = 1`.
-Prévoir :
+Minimum recommandé :
 
-- compat ascendante (`v1` accepté durablement),
-- ajout de champs permissif (ignore unknown fields),
-- endpoint versionné ultérieurement (`/interconnect/v2`).
+- JWT bearer signé (RS256)
+- rotation clés via JWKS
+- TTL token court (5-15 min)
 
-## 9.2 Stratégie de migration
+## 9.2 Autorisation
 
-1. Déployer serveur tolérant (`additionalProperties: true`).
-2. Introduire champs nouveaux côté serveur en lecture seule.
-3. Activer progressivement côté clients.
+- policy par client/entité
+- quotas par client
+- scope : `publish`, `list-active`
+
+## 9.3 Hardening
+
+- TLS 1.2+ only
+- HSTS
+- CORS fermé (si nécessaire)
+- body size limit
+- rate limit + circuit breaker
+- protection WAF sur patterns abuse
+
+## 9.4 Journalisation sécurité
+
+- logs signés/immutables si possible
+- corrélation `requestId`
+- alerte sur 401/403/429 anormaux
 
 ---
 
-## 10) Performance et SLO
+## 10) Observabilité
 
-## 10.1 Cibles recommandées
+## 10.1 Logs structurés
 
-- `publish` p95 < 300 ms (intra-région).
-- `list-active` p95 < 500 ms.
-- disponibilité API > 99.9%.
+Champs minimum :
 
-## 10.2 Mise en cache
+- `timestamp`, `level`, `requestId`, `action`, `statusCode`, `latencyMs`, `entity`, `departement`, `operationRef`, `deduplicated`
 
-- `list-active` peut être servi depuis vue matérialisée / Redis (TTL 2–5 s).
-- invalidation sur réception d'un `publish`.
+## 10.2 Métriques
+
+- `http_requests_total{action,code}`
+- `http_request_duration_ms_bucket{action}`
+- `interconnect_publish_ingest_total`
+- `interconnect_publish_dedup_total`
+- `active_operations_count`
+
+## 10.3 Traces distribuées
+
+- OpenTelemetry
+- propagation `traceparent`
+- span DB pour ingestion/projection
 
 ---
 
-## 11) Exemples de JSON Schema (extraits)
+## 11) Performance et capacité
 
-## 11.1 Enveloppe
+## 11.1 SLO suggérés
+
+- Publish p95 < 250 ms
+- List-active p95 < 400 ms
+- Erreur 5xx < 0.1%
+
+## 11.2 Dimensionnement initial (ordre de grandeur)
+
+- 100 entités
+- 1 update/5 sec en moyenne par entité active
+- ~20 req/s pic global (MVP)
+
+## 11.3 Optimisations
+
+- projection en mémoire + write-through DB
+- Redis read cache sur list-active (TTL 2-5 s)
+- indexation ciblée + vacuum/autovacuum tuning
+
+---
+
+## 12) Déploiement
+
+## 12.1 Environnements
+
+- `dev` : validation schéma, tests contrats
+- `staging` : charge + chaos + sécurité
+- `prod` : HA, backups, runbooks validés
+
+## 12.2 Topologies
+
+### Niveau 1 — Single AZ
+
+- 2 pods API derrière LB
+- PostgreSQL managé
+- Redis managé (option)
+
+### Niveau 2 — Multi AZ
+
+- API autoscalée
+- Postgres HA
+- Observabilité centralisée
+
+### Niveau 3 — Multi région
+
+- active/passive ou active/active
+- réplication logique + stratégie de convergence
+
+---
+
+## 13) Plan de tests
+
+## 13.1 Tests contrats
+
+- valider `publish` avec tous `eventType`
+- valider `list-active` structure `operations`
+- cas invalides (schema, taille, dates)
+
+## 13.2 Tests de charge
+
+- ramp-up 1 → 200 req/s
+- spike x10 sur 1 min
+- endurance 8h
+
+## 13.3 Chaos
+
+- latence DB
+- perte partielle Redis
+- redémarrage pods
+
+## 13.4 Sécurité
+
+- fuzz JSON
+- injection payload texte
+- brute force token
+
+---
+
+## 14) Versionnement et migration
+
+## 14.1 Principes
+
+- backward compatible par défaut
+- champs inconnus ignorés
+- dépréciation annoncée avec date
+
+## 14.2 Feuille de route API
+
+- v1 (actuel): endpoint unique action-based
+- v1.1 : auth obligatoire + requestId standard
+- v2 : endpoints explicites `/events`, `/operations/active`
+
+---
+
+## 15) Runbooks d’exploitation
+
+## 15.1 Incident : montée 5xx
+
+1. vérifier saturation CPU/mémoire et erreurs DB
+2. activer mode dégradé (limiter publish payloads volumineux)
+3. augmenter replicas
+4. purger files bloquées
+5. post-mortem avec timeline
+
+## 15.2 Incident : latence list-active
+
+1. vérifier index et plan SQL
+2. activer/ajuster cache TTL
+3. vérifier cardinalité et bloat table
+
+## 15.3 Incident : conflit de cohérence
+
+1. replay des événements depuis `interconnect_events`
+2. recalcul projection `active_operations`
+3. comparer hash projection avant/après
+
+---
+
+## 16) OpenAPI (base v1)
+
+```yaml
+openapi: 3.0.3
+info:
+  title: CartoFLU Interconnect API
+  version: 1.0.0
+paths:
+  /interconnect:
+    post:
+      summary: Publish or list active operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, envelope]
+              properties:
+                action:
+                  type: string
+                  enum: [publish, list-active]
+                envelope:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  requestId:
+                    type: string
+                  operations:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+```
+
+---
+
+## 17) Annexes
+
+## 17.1 JSON Schema minimal de requête
 
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["version", "kind", "app", "updatedAt", "entity", "source", "payload"],
+  "required": ["action", "envelope"],
   "properties": {
-    "version": { "type": "integer", "minimum": 1 },
-    "kind": { "type": "string" },
-    "app": { "type": "string" },
-    "updatedAt": { "type": "string", "format": "date-time" },
-    "entity": {
+    "action": { "type": "string", "enum": ["publish", "list-active"] },
+    "envelope": {
       "type": "object",
-      "required": ["name", "departement"],
+      "required": ["version", "app", "updatedAt", "entity", "source", "payload"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "departement": { "type": "string", "minLength": 1 }
-      }
+        "version": { "type": "integer", "minimum": 1 },
+        "app": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "entity": {
+          "type": "object",
+          "required": ["name", "departement"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "departement": { "type": "string", "minLength": 1 }
+          }
+        },
+        "source": { "type": "object" },
+        "payload": { "type": "object" }
+      },
+      "additionalProperties": true
     }
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }
 ```
 
----
+## 17.2 Checklist production (exécutable)
 
-## 12) Implémentation de référence (comportement)
+- [ ] Latence p95 conforme en charge nominale
+- [ ] Taux 5xx < objectif sur 7 jours glissants
+- [ ] Test restauration backup effectué < 30 jours
+- [ ] Rotations clés/token validées
+- [ ] Alertes pager configurées et testées
+- [ ] Runbooks signés et connus de l’astreinte
+- [ ] Documentation API diffusée aux équipes interop
 
-## 12.1 Pseudo-code publish
+## 17.3 Note de gouvernance documentaire
 
-```text
-if action == "publish":
-  validate envelope
-  extract eventType + operationRef
-  append interconnect_events
-  project active_operations
-  return 202/200 {"ok": true}
-```
+Vous avez raison : une documentation “industrielle” complète peut atteindre des centaines de pages.  
+Ce document constitue la **base technique structurante** pour implémenter le serveur et l’exploiter, et peut être étendu en “volumes” :
 
-## 12.2 Pseudo-code list-active
-
-```text
-if action == "list-active":
-  validate envelope
-  read active_operations where status="active"
-  optionally exclude entity/departement from envelope.payload
-  return 200 {"ok": true, "operations": [...]}
-```
-
----
-
-## 13) Points d'attention spécifiques CartoFLU
-
-- `opActiveDuplicate` peut contenir des structures volumineuses (`session.bearings`, etc.).
-- la clôture logique est portée par `eventType = operation-closed`.
-- le client filtre déjà localement les opérations de sa propre entité/département à l'affichage.
-- timeouts client paramétrables via `interconnect-fetch-timeout-ms`.
-
----
-
-## 14) Checklist de mise en production
-
-- [ ] TLS actif + certificats valides.
-- [ ] AuthN/AuthZ définies.
-- [ ] Validation JSON + limites payload.
-- [ ] Monitoring (latence, erreurs, saturation).
-- [ ] Rétention events + politique RGPD.
-- [ ] Stratégie de sauvegarde/restauration.
-- [ ] Test de charge et chaos test réseau.
-- [ ] Documentation OpenAPI publiée.
-
----
-
-## 15) Extension recommandée (future-proof)
-
-- Passage à des endpoints explicites (`/events`, `/operations/active`) tout en conservant le mode `action` pour rétrocompatibilité.
-- Support WebSocket/SSE pour push temps réel des opérations actives.
-- Signature HMAC des payloads (anti-altération).
-- Ajout d'un champ `originInstanceId` pour distinguer plusieurs postes d'une même entité.
-- Politique de TTL automatique des opérations actives sans heartbeat.
+- Volume A : spécification protocole + OpenAPI détaillée
+- Volume B : architecture sécurité et conformité
+- Volume C : exploitation SRE + PRA/PCA
+- Volume D : qualification/performance/capacité
+- Volume E : migration de versions et rétrocompatibilité
