@@ -4,6 +4,27 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    echo json_encode([
+        'ok' => true,
+        'message' => 'Interconnect proxy is reachable.',
+        'hint' => 'Send a POST JSON body with action=publish or action=list-active.',
+        'example' => [
+            'action' => 'list-active',
+            'envelope' => [
+                'version' => 1,
+                'kind' => 'operation-interconnect-query',
+                'app' => 'CartoFLU',
+                'updatedAt' => gmdate('c'),
+                'entity' => ['name' => 'ADRASEC 25', 'departement' => '25'],
+                'source' => ['path' => '/', 'mode' => 'connected', 'syncSource' => 'join-operation'],
+                'payload' => ['excludeEntity' => 'ADRASEC 25', 'excludeDepartement' => '25']
+            ]
+        ]
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['ok' => false, 'error' => 'Method not allowed. Use POST.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
