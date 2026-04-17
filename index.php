@@ -3188,13 +3188,38 @@ const zoomControl = L.control.zoom({ position: 'topleft' }).addTo(map);
 const scaleControl = L.control.scale({ position: 'bottomright', metric: true, imperial: false, maxWidth: 120 }).addTo(map);
 const attributionContainer = map.attributionControl?.getContainer?.();
 const scaleContainer = scaleControl?.getContainer?.();
+const bottomLeftContainer = map.getContainer()?.querySelector?.('.leaflet-bottom.leaflet-left');
 if (attributionContainer && scaleContainer) {
+  const attributionIcons = document.createElement('div');
+  attributionIcons.className = 'leaflet-control';
+  attributionIcons.style.display = 'inline-flex';
+  attributionIcons.style.alignItems = 'center';
+  attributionIcons.style.gap = '4px';
+  attributionIcons.style.margin = '0 0 0 4px';
+  attributionIcons.style.marginRight = '2px';
+  attributionIcons.style.background = 'transparent';
+  attributionIcons.style.boxShadow = 'none';
+  attributionIcons.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+      <path d="M7.5 6H6.2C5.0799 6 4.51984 6 4.09202 6.21799C3.71569 6.40973 3.40973 6.71569 3.21799 7.09202C3 7.51984 3 8.0799 3 9.2V14.8C3 15.9201 3 16.4802 3.21799 16.908C3.40973 17.2843 3.71569 17.5903 4.09202 17.782C4.51984 18 5.0799 18 6.2 18H7.5M15.5 6H16.8C17.9201 6 18.4802 6 18.908 6.21799C19.2843 6.40973 19.5903 6.71569 19.782 7.09202C20 7.51984 20 8.0799 20 9.2V14.8C20 15.9201 20 16.4802 19.782 16.908C19.5903 17.2843 19.2843 17.5903 18.908 17.782C18.4802 18 17.9201 18 16.8 18H15.5M11.5 6V15M11.5 18H11.51M21 13V11" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+      <path d="M21 12C21 16.9706 16.9706 21 12 21M21 12C21 7.02944 16.9706 3 12 3M21 12C21 13.6569 16.9706 15 12 15C7.02944 15 3 13.6569 3 12M21 12C21 10.3431 16.9706 9 12 9C7.02944 9 3 10.3431 3 12M12 21C7.02944 21 3 16.9706 3 12M12 21C10.3431 21 9 16.9706 9 12C9 7.02944 10.3431 3 12 3M12 21C13.6569 21 15 16.9706 15 12C15 7.02944 13.6569 3 12 3M3 12C3 7.02944 7.02944 3 12 3" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+      <path d="M10.0002 10.0007C10.0002 11.1053 10.8957 12.0007 12.0002 12.0007V21.0007M16.2429 5.75806C17.9419 7.45708 18.409 9.92154 17.6441 12.0414M19.0715 2.92969C22.3547 6.21287 22.8777 11.211 20.6404 15.0406M7.75758 14.2433C5.76003 12.2458 5.46541 9.19017 6.87372 6.88051M4.92893 17.0718C1.36319 13.5061 1.0532 7.91746 3.99898 4M3 3L21 21" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  `;
+
   attributionContainer.style.display = 'flex';
   attributionContainer.style.alignItems = 'center';
   attributionContainer.style.gap = '6px';
   scaleContainer.style.margin = '0';
   scaleContainer.style.float = 'none';
   attributionContainer.insertBefore(scaleContainer, attributionContainer.firstChild);
+  if (bottomLeftContainer) {
+    bottomLeftContainer.insertBefore(attributionIcons, bottomLeftContainer.firstChild);
+  }
 }
 
 const mapToolbar = document.querySelector('.map-toolbar');
