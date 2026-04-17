@@ -1145,6 +1145,10 @@
     padding: 2px 5px 0px;
   }
 
+  .leaflet-bottom {
+    width: 100%;
+  }
+
   /* MAP TOOLBAR */
   .map-toolbar {
     display: flex;
