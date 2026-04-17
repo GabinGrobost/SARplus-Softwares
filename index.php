@@ -1145,6 +1145,10 @@
     padding: 2px 5px 0px;
   }
 
+  .leaflet-control-attribution.leaflet-control {
+    background: transparent;
+  }
+
   .leaflet-bottom {
     width: 100%;
     background: rgba(255,255,255,.8);
